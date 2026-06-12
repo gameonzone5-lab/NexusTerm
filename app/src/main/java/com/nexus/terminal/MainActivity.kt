@@ -41,6 +41,8 @@ class MainActivity : ComponentActivity() {
                 tvOutput.append("\n[$currentDirectory]$ $command\n")
                 etInput.text.clear()
 
+                val isLinuxReady = File(filesDir, "linux/etc").exists()
+
                 if (command.startsWith("cd ") || command == "cd") {
                     handleCdCommand(command)
                 } else if (command == "clear") {
@@ -50,13 +52,9 @@ class MainActivity : ComponentActivity() {
                     requestStoragePermission()
                 } else if (command == "setup-linux") {
                     setupLinuxEnvironment()
-                } else if (command.startsWith("linux")) {
-                    val linuxCmd = command.removePrefix("linux").trim()
-                    if (linuxCmd.isNotEmpty()) {
-                        runLinuxCommand(linuxCmd)
-                    } else {
-                        tvOutput.append("Usage: linux <command>\n")
-                    }
+                } else if (isLinuxReady) {
+                    // টারমাক্সের মতো জাদুকরী ফিচার: যেকোনো কমান্ড এখন সরাসরি Ubuntu-তে রান হবে!
+                    runLinuxCommand(command)
                 } else {
                     executeCommand(command)
                 }
@@ -76,7 +74,7 @@ class MainActivity : ComponentActivity() {
                 permissionChecked = false
             } else {
                 if (!permissionChecked) {
-                    tvOutput.append("\n[SUCCESS] Storage Ready! Type 'setup-linux' to install AI environment.\n")
+                    tvOutput.append("\n[SUCCESS] Storage Ready! Type 'setup-linux' to install Ubuntu (APT) environment.\n")
                     permissionChecked = true
                 }
             }
@@ -120,34 +118,46 @@ class MainActivity : ComponentActivity() {
                 val linuxDir = File(baseDir, "linux")
                 val prootFile = File(baseDir, "proot")
 
+                runOnUiThread { tvOutput.append("[*] Preparing pure Ubuntu APT Environment...\n") }
+
+                // আগের Alpine Linux মুছে ফেলার লজিক
+                if (linuxDir.exists() && File(linuxDir, "sbin/apk").exists()) {
+                    runOnUiThread { tvOutput.append("[*] Removing old Alpine system...\n") }
+                    linuxDir.deleteRecursively()
+                }
                 if (!linuxDir.exists()) linuxDir.mkdirs()
 
                 if (!prootFile.exists() || prootFile.length() < 500000) {
                     runOnUiThread { tvOutput.append("[*] Downloading PRoot Engine...\n") }
                     downloadFile("https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-aarch64-static", prootFile.absolutePath)
-                    
-                    // Termux ট্রিক: ফাইলটিকে নেটিভভাবে এক্সিকিউটেবল করে দেওয়া
                     prootFile.setExecutable(true, false)
                     Runtime.getRuntime().exec(arrayOf("chmod", "+x", prootFile.absolutePath)).waitFor()
                 }
 
                 val rootfsTar = File(baseDir, "rootfs.tar.gz")
-                if (!File(linuxDir, "etc").exists()) {
-                    runOnUiThread { tvOutput.append("[*] Downloading Alpine Linux RootFS...\n") }
-                    downloadFile("https://dl-cdn.alpinelinux.org/alpine/v3.18/releases/aarch64/alpine-minirootfs-3.18.4-aarch64.tar.gz", rootfsTar.absolutePath)
+                if (!File(linuxDir, "usr/bin/apt").exists()) {
+                    runOnUiThread { tvOutput.append("[*] Downloading Official Ubuntu Base (Please wait, ~25MB)...\n") }
+                    // 100% রিলায়েবল Ubuntu Base URL
+                    downloadFile("https://old-releases.ubuntu.com/ubuntu-base/releases/20.04/release/ubuntu-base-20.04.1-base-arm64.tar.gz", rootfsTar.absolutePath)
                     
-                    runOnUiThread { tvOutput.append("[*] Extracting File System...\n") }
+                    runOnUiThread { tvOutput.append("[*] Extracting Ubuntu File System...\n") }
                     val extProcess = Runtime.getRuntime().exec(arrayOf("tar", "-xf", rootfsTar.absolutePath, "-C", linuxDir.absolutePath))
                     extProcess.waitFor()
                     
                     if (extProcess.exitValue() == 0) {
                         rootfsTar.delete()
-                        runOnUiThread { tvOutput.append("[SUCCESS] Linux Installed Perfectly!\nTest it by typing: linux cat /etc/os-release\n") }
+                        
+                        // APT আপডেট যাতে ঠিকমতো কাজ করে তার জন্য DNS ফিক্স
+                        val resolvConf = File(linuxDir, "etc/resolv.conf")
+                        resolvConf.parentFile.mkdirs()
+                        resolvConf.writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
+
+                        runOnUiThread { tvOutput.append("[SUCCESS] Ubuntu (APT) Installed Perfectly!\nTest it by typing: apt update\n") }
                     } else {
                         runOnUiThread { tvOutput.append("[ERROR] Extraction failed.\n") }
                     }
                 } else {
-                    runOnUiThread { tvOutput.append("[SUCCESS] Linux is already installed!\nTest it by typing: linux cat /etc/os-release\n") }
+                    runOnUiThread { tvOutput.append("[SUCCESS] Ubuntu APT is already installed and ready!\n") }
                 }
             } catch (e: Exception) {
                 runOnUiThread { tvOutput.append("[ERROR] Setup failed: ${e.message}\n") }
@@ -188,16 +198,16 @@ class MainActivity : ComponentActivity() {
         val rootfsDir = "$baseDir/linux"
         val sdcard = Environment.getExternalStorageDirectory().absolutePath
 
-        if (!File(prootBinary).exists() || !File(rootfsDir, "etc").exists()) {
-            tvOutput.append("Linux environment incomplete! Type 'setup-linux' to repair.\n")
-            return
-        }
-
         Thread {
             try {
+                // Ubuntu-র ভেতর কমান্ড রান করানোর ম্যাজিক
                 val pb = ProcessBuilder(
-                    prootBinary, "-0", "-b", "$sdcard:/sdcard", "-b", "/dev", "-b", "/proc", "-b", "/sys",
-                    "-r", rootfsDir, "-w", "/root", "/bin/sh", "-c", linuxCmd
+                    prootBinary, "-0", "--link2symlink", 
+                    "-b", "$sdcard:/sdcard", "-b", "$baseDir:$baseDir", 
+                    "-b", "/dev", "-b", "/proc", "-b", "/sys",
+                    "-r", rootfsDir, "-w", currentDirectory, 
+                    "/usr/bin/env", "PATH=/bin:/usr/bin:/sbin:/usr/sbin", 
+                    "/bin/sh", "-c", linuxCmd
                 )
                 pb.redirectErrorStream(true)
                 val process = pb.start()
@@ -213,7 +223,7 @@ class MainActivity : ComponentActivity() {
                     else tvOutput.append("[Executed successfully, no output]\n")
                 }
             } catch (e: Exception) {
-                runOnUiThread { tvOutput.append("Linux Error: ${e.message}\n") }
+                runOnUiThread { tvOutput.append("Ubuntu Error: ${e.message}\n") }
             }
         }.start()
     }
