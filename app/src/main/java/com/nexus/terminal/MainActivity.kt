@@ -28,9 +28,9 @@ class MainActivity : ComponentActivity() {
         etInput = findViewById(R.id.etInput)
         btnRun = findViewById(R.id.btnRun)
 
-        requestStoragePermission()
-
         currentDirectory = filesDir.absolutePath
+
+        checkPermissionAndAlert()
 
         btnRun.setOnClickListener {
             val command = etInput.text.toString().trim()
@@ -38,10 +38,13 @@ class MainActivity : ComponentActivity() {
                 tvOutput.append("\n[$currentDirectory]$ $command\n")
                 etInput.text.clear()
 
-                if (command.startsWith("cd ")) {
+                if (command.startsWith("cd ") || command == "cd") {
                     handleCdCommand(command)
                 } else if (command == "clear") {
-                    tvOutput.text = "NexusTerm v1.0\nReady...\n"
+                    tvOutput.text = ""
+                    checkPermissionAndAlert()
+                } else if (command == "permit") {
+                    requestStoragePermission()
                 } else {
                     executeCommand(command)
                 }
@@ -49,31 +52,49 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun requestStoragePermission() {
+    private fun checkPermissionAndAlert() {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
             if (!Environment.isExternalStorageManager()) {
-                try {
-                    val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-                    intent.addCategory("android.intent.category.DEFAULT")
-                    intent.data = Uri.parse(String.format("package:%s", applicationContext.packageName))
-                    startActivity(intent)
-                } catch (e: Exception) {
-                    val intent = Intent()
-                    intent.action = Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION
-                    startActivity(intent)
-                }
+                tvOutput.append("NexusTerm v1.0\nReady...\n\n[WARNING] Full Storage Permission Not Granted!\nType 'permit' and press RUN to allow access.\n")
+            } else {
+                tvOutput.append("NexusTerm v1.0\nReady...\n\n[SUCCESS] Storage Permission Granted!\n")
+            }
+        }
+    }
+
+    private fun requestStoragePermission() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            try {
+                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                intent.addCategory("android.intent.category.DEFAULT")
+                intent.data = Uri.parse(String.format("package:%s", applicationContext.packageName))
+                startActivity(intent)
+            } catch (e: Exception) {
+                val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                startActivity(intent)
             }
         }
     }
 
     private fun handleCdCommand(command: String) {
-        val newDir = command.substring(3).trim()
+        if (command == "cd") {
+            currentDirectory = filesDir.absolutePath
+            return
+        }
+        
+        var newDir = command.substring(3).trim()
+        
+        // /sdcard লিখলে স্বয়ংক্রিয়ভাবে আসল পাথে নিয়ে যাবে
+        if (newDir == "/sdcard" || newDir == "/sdcard/") {
+            newDir = "/storage/emulated/0"
+        }
+
         val targetFile = if (newDir.startsWith("/")) File(newDir) else File(currentDirectory, newDir)
         
         if (targetFile.exists() && targetFile.isDirectory) {
             currentDirectory = targetFile.canonicalPath
         } else {
-            tvOutput.append("cd: $newDir: No such file or directory\n")
+            tvOutput.append("cd: $newDir: No such file or directory (or access denied)\n")
         }
     }
 
