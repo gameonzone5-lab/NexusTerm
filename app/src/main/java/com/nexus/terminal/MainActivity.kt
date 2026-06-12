@@ -19,6 +19,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var btnRun: Button
     
     private var currentDirectory: String = ""
+    private var permissionChecked: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -30,8 +31,6 @@ class MainActivity : ComponentActivity() {
 
         currentDirectory = filesDir.absolutePath
 
-        checkPermissionAndAlert()
-
         btnRun.setOnClickListener {
             val command = etInput.text.toString().trim()
             if (command.isNotEmpty()) {
@@ -42,7 +41,7 @@ class MainActivity : ComponentActivity() {
                     handleCdCommand(command)
                 } else if (command == "clear") {
                     tvOutput.text = ""
-                    checkPermissionAndAlert()
+                    checkPermission()
                 } else if (command == "permit") {
                     requestStoragePermission()
                 } else {
@@ -52,12 +51,24 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun checkPermissionAndAlert() {
+    // অ্যাপ সেটিং থেকে ফিরে আসলেই অটোমেটিক পারমিশন চেক করবে
+    override fun onResume() {
+        super.onResume()
+        if (!permissionChecked) {
+            checkPermission()
+        }
+    }
+
+    private fun checkPermission() {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
             if (!Environment.isExternalStorageManager()) {
-                tvOutput.append("NexusTerm v1.0\nReady...\n\n[WARNING] Full Storage Permission Not Granted!\nType 'permit' and press RUN to allow access.\n")
+                tvOutput.append("\n[WARNING] Full Storage Permission Not Granted!\nType 'permit' to allow.\n")
+                permissionChecked = false
             } else {
-                tvOutput.append("NexusTerm v1.0\nReady...\n\n[SUCCESS] Storage Permission Granted!\n")
+                if (!permissionChecked) {
+                    tvOutput.append("\n[SUCCESS] Storage Permission Granted! You can now use 'cd /sdcard'\n")
+                    permissionChecked = true
+                }
             }
         }
     }
@@ -77,24 +88,26 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleCdCommand(command: String) {
-        if (command == "cd") {
+        val newDir = command.removePrefix("cd").trim()
+        
+        if (newDir.isEmpty() || newDir == "~") {
             currentDirectory = filesDir.absolutePath
             return
         }
-        
-        var newDir = command.substring(3).trim()
-        
-        // /sdcard লিখলে স্বয়ংক্রিয়ভাবে আসল পাথে নিয়ে যাবে
-        if (newDir == "/sdcard" || newDir == "/sdcard/") {
-            newDir = "/storage/emulated/0"
+
+        // /sdcard কে অ্যান্ড্রয়েডের আসল পাথে কনভার্ট করা
+        var targetPath = newDir
+        if (newDir == "/sdcard" || newDir.startsWith("/sdcard/")) {
+            val externalRoot = Environment.getExternalStorageDirectory().absolutePath
+            targetPath = newDir.replace("/sdcard", externalRoot)
         }
 
-        val targetFile = if (newDir.startsWith("/")) File(newDir) else File(currentDirectory, newDir)
+        val targetFile = if (targetPath.startsWith("/")) File(targetPath) else File(currentDirectory, targetPath)
         
-        if (targetFile.exists() && targetFile.isDirectory) {
+        if (targetFile.exists() && targetFile.isDirectory && targetFile.canRead()) {
             currentDirectory = targetFile.canonicalPath
         } else {
-            tvOutput.append("cd: $newDir: No such file or directory (or access denied)\n")
+            tvOutput.append("cd: $newDir: Permission denied or Directory not found\n")
         }
     }
 
