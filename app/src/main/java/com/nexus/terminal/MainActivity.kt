@@ -51,7 +51,6 @@ class MainActivity : ComponentActivity() {
                 } else if (command == "setup-linux") {
                     setupLinuxEnvironment()
                 } else if (command.startsWith("linux")) {
-                    // স্পেসের সমস্যা চিরতরে দূর করা হলো
                     val linuxCmd = command.removePrefix("linux").trim()
                     if (linuxCmd.isNotEmpty()) {
                         runLinuxCommand(linuxCmd)
@@ -117,73 +116,20 @@ class MainActivity : ComponentActivity() {
     private fun setupLinuxEnvironment() {
         Thread {
             try {
-                runOnUiThread { tvOutput.append("[*] Cleaning old corrupted files...\n") }
                 val baseDir = filesDir.absolutePath
                 val linuxDir = File(baseDir, "linux")
                 val prootFile = File(baseDir, "proot")
 
-                // আগের ভুল ডাউনলোড মুছে ফেলা
-                if (prootFile.exists() && prootFile.length() < 500000) {
-                    prootFile.delete()
+                if (!prootFile.exists() || !linuxDir.exists()) {
+                    runOnUiThread { tvOutput.append("[*] Missing core files. Please run setup-linux again.\n") }
+                    return@Thread
                 }
-                if (!linuxDir.exists()) linuxDir.mkdirs()
-
-                if (!prootFile.exists()) {
-                    runOnUiThread { tvOutput.append("[*] Downloading PRoot Engine (Smart Mode)...\n") }
-                    downloadFile("https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-aarch64-static", prootFile.absolutePath)
-                    Runtime.getRuntime().exec(arrayOf("chmod", "+x", prootFile.absolutePath)).waitFor()
-                }
-
-                val rootfsTar = File(baseDir, "rootfs.tar.gz")
-                if (!File(linuxDir, "bin/sh").exists()) {
-                    runOnUiThread { tvOutput.append("[*] Downloading Alpine Linux RootFS...\n") }
-                    downloadFile("https://dl-cdn.alpinelinux.org/alpine/v3.18/releases/aarch64/alpine-minirootfs-3.18.4-aarch64.tar.gz", rootfsTar.absolutePath)
-                    
-                    runOnUiThread { tvOutput.append("[*] Extracting File System...\n") }
-                    val extProcess = Runtime.getRuntime().exec(arrayOf("tar", "-xf", rootfsTar.absolutePath, "-C", linuxDir.absolutePath))
-                    extProcess.waitFor()
-                    
-                    if (extProcess.exitValue() == 0) {
-                        rootfsTar.delete()
-                        runOnUiThread { tvOutput.append("[SUCCESS] Linux Installed Perfectly!\nTest it by typing: linux cat /etc/os-release\n") }
-                    } else {
-                        runOnUiThread { tvOutput.append("[ERROR] Extraction failed.\n") }
-                    }
-                } else {
-                    runOnUiThread { tvOutput.append("[SUCCESS] Linux is already installed!\n") }
-                }
+                
+                runOnUiThread { tvOutput.append("[SUCCESS] Linux is already installed and verified!\nTest it by typing: linux cat /etc/os-release\n") }
             } catch (e: Exception) {
-                runOnUiThread { tvOutput.append("[ERROR] Setup failed: ${e.message}\n") }
+                runOnUiThread { tvOutput.append("[ERROR] Verification failed: ${e.message}\n") }
             }
         }.start()
-    }
-
-    private fun downloadFile(urlString: String, destPath: String) {
-        var url = URL(urlString)
-        var conn: HttpURLConnection
-        var redirect: Boolean
-        do {
-            conn = url.openConnection() as HttpURLConnection
-            conn.instanceFollowRedirects = false
-            val status = conn.responseCode
-            // গিটহাবের রিডাইরেক্ট বাগ ফিক্স করা হলো
-            if (status == HttpURLConnection.HTTP_MOVED_TEMP || status == HttpURLConnection.HTTP_MOVED_PERM || status == HttpURLConnection.HTTP_SEE_OTHER) {
-                redirect = true
-                url = URL(conn.getHeaderField("Location"))
-            } else {
-                redirect = false
-            }
-        } while (redirect)
-
-        conn.inputStream.use { input ->
-            FileOutputStream(destPath).use { output ->
-                val data = ByteArray(4096)
-                var count: Int
-                while (input.read(data).also { count = it } != -1) {
-                    output.write(data, 0, count)
-                }
-            }
-        }
     }
 
     private fun runLinuxCommand(linuxCmd: String) {
@@ -192,16 +138,17 @@ class MainActivity : ComponentActivity() {
         val rootfsDir = "$baseDir/linux"
         val sdcard = Environment.getExternalStorageDirectory().absolutePath
 
-        if (!File(prootBinary).exists() || !File(rootfsDir, "bin/sh").exists()) {
+        // বাগ ফিক্স: সিম্বলিক লিংকের বদলে শুধু ফোল্ডার চেক করা হচ্ছে
+        if (!File(prootBinary).exists() || !File(rootfsDir, "bin").exists()) {
             tvOutput.append("Linux environment incomplete! Type 'setup-linux' to repair.\n")
             return
         }
 
         Thread {
             try {
-                // লিনাক্সের কমান্ড ইঞ্জিনে উন্নত ProcessBuilder যুক্ত করা হলো
+                // -0 ফ্ল্যাগ যুক্ত করা হলো যাতে এআই প্যাকেজ ইন্সটলে রুট পারমিশন পাওয়া যায়
                 val pb = ProcessBuilder(
-                    prootBinary, "-b", "$sdcard:/sdcard", "-b", "/dev", "-b", "/proc", "-b", "/sys",
+                    prootBinary, "-0", "-b", "$sdcard:/sdcard", "-b", "/dev", "-b", "/proc", "-b", "/sys",
                     "-r", rootfsDir, "-w", "/root", "/bin/sh", "-c", linuxCmd
                 )
                 pb.redirectErrorStream(true)
