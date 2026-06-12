@@ -46,7 +46,7 @@ class MainActivity : ComponentActivity() {
                     command == "permit" -> requestStoragePermission()
                     command == "clear" -> tvOutput.text = ""
                     command.startsWith("cd ") -> handleCdCommand(command)
-                    // টারমাক্স প্রবাহ: লিনাক্স ইন্সটল থাকলে apt, pip বা যেকোনো কমান্ড সরাসরি রান হবে
+                    // টারমাক্সের হুবহু বিকল্প: লিনাক্স ইন্সটল থাকলে যেকোনো কমান্ড সরাসরি উবুন্টুতে রান হবে
                     isLinuxReady -> runLinuxCommand(command)
                     else -> executeCommand(command)
                 }
@@ -87,23 +87,30 @@ class MainActivity : ComponentActivity() {
     private fun setupLinuxEnvironment() {
         Thread {
             try {
-                runOnUiThread { tvOutput.append("[*] Downloading Termux Ubuntu (APT) Environment...\n") }
+                runOnUiThread { tvOutput.append("[*] Downloading Official Ubuntu Base (APT)...\n") }
                 val linuxDir = File(filesDir, "linux")
                 if (!linuxDir.exists()) linuxDir.mkdirs()
 
                 val tarFile = File(filesDir, "rootfs.tar.gz")
-                // রিলায়েবল গিটহাব অ্যান্ডরোনিক্স মিরর
-                downloadFile("https://raw.githubusercontent.com/AndronixApp/RootfsArchiver/master/Ubuntu20/ubuntu20-rootfs-arm64.tar.gz", tarFile.absolutePath)
                 
-                runOnUiThread { tvOutput.append("[*] Extracting Ubuntu RootFS (APT)...\n") }
-                Runtime.getRuntime().exec(arrayOf("tar", "-xf", tarFile.absolutePath, "-C", linuxDir.absolutePath)).waitFor()
-                tarFile.delete()
-
-                // ইন্টারনেট কানেকশন চালুর জন্য DNS কনফিগার
-                val resolvConf = File(linuxDir, "etc/resolv.conf")
-                resolvConf.writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
-
-                runOnUiThread { tvOutput.append("[SUCCESS] Ubuntu ready! Try typing: apt update\n") }
+                // 100% রিলায়েবল Canonical সার্ভারের অফিশিয়াল উবুন্টু লিংক (কখনো ডিলিট হবে না)
+                downloadFile("https://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-arm64.tar.gz", tarFile.absolutePath)
+                
+                runOnUiThread { tvOutput.append("[*] Extracting Official Ubuntu RootFS...\n") }
+                val extProcess = Runtime.getRuntime().exec(arrayOf("tar", "-xf", tarFile.absolutePath, "-C", linuxDir.absolutePath))
+                extProcess.waitFor()
+                
+                if (extProcess.exitValue() == 0) {
+                    tarFile.delete()
+                    // ইন্টারনেট এবং DNS ফিক্স
+                    val resolvConf = File(linuxDir, "etc/resolv.conf")
+                    resolvConf.parentFile.mkdirs()
+                    resolvConf.writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
+                    
+                    runOnUiThread { tvOutput.append("[SUCCESS] Termux-like Ubuntu is ready! Type: apt update\n") }
+                } else {
+                    runOnUiThread { tvOutput.append("[ERROR] Extraction failed. Try again.\n") }
+                }
             } catch (e: Exception) {
                 runOnUiThread { tvOutput.append("[ERROR] Setup failed: ${e.message}\n") }
             }
@@ -117,17 +124,24 @@ class MainActivity : ComponentActivity() {
                 if (!proot.exists() || proot.length() < 500000) {
                      downloadFile("https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-aarch64-static", proot.absolutePath)
                 }
-                // রানটাইমে এক্সিকিউট পারমিশন জোরপূর্বক দেওয়া (SDK 28 এর সাথে এটি কাজ করবেই)
+                
+                // অ্যান্ড্রয়েডের W^X পলিসি বাইপাস
                 proot.setExecutable(true, false)
                 
-                val pb = ProcessBuilder(
+                val commandList = listOf(
                     proot.absolutePath, "-0", "--link2symlink",
-                    "-b", "/sdcard:/sdcard", "-r", File(filesDir, "linux").absolutePath, 
+                    "-b", "/sdcard:/sdcard", 
+                    "-b", "/dev", "-b", "/proc", "-b", "/sys",
+                    "-r", File(filesDir, "linux").absolutePath, 
+                    "-w", "/root",
                     "/usr/bin/env", "PATH=/bin:/usr/bin:/sbin:/usr/sbin", 
                     "/bin/sh", "-c", cmd
                 )
+                
+                val pb = ProcessBuilder(commandList)
                 pb.redirectErrorStream(true)
                 val p = pb.start()
+                
                 p.inputStream.bufferedReader().useLines { lines -> 
                     lines.forEach { runOnUiThread { tvOutput.append("$it\n") } } 
                 }
@@ -137,10 +151,39 @@ class MainActivity : ComponentActivity() {
         }.start()
     }
 
-    private fun downloadFile(url: String, path: String) {
-        val connection = URL(url).openConnection() as HttpURLConnection
-        connection.instanceFollowRedirects = true
-        connection.inputStream.use { input -> FileOutputStream(path).use { output -> input.copyTo(output) } }
+    private fun downloadFile(urlString: String, destPath: String) {
+        var url = URL(urlString)
+        var conn: HttpURLConnection
+        var redirect: Boolean
+        
+        do {
+            conn = url.openConnection() as HttpURLConnection
+            // সার্ভার ব্লক এড়াতে ব্রাউজার স্পুফিং (ইউজার-এজেন্ট)
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+            conn.instanceFollowRedirects = false
+            val status = conn.responseCode
+            
+            if (status == HttpURLConnection.HTTP_MOVED_TEMP || status == HttpURLConnection.HTTP_MOVED_PERM || status == HttpURLConnection.HTTP_SEE_OTHER) {
+                redirect = true
+                url = URL(conn.getHeaderField("Location"))
+            } else {
+                redirect = false
+            }
+        } while (redirect)
+
+        if (conn.responseCode !in 200..299) {
+            throw Exception("HTTP Download Error ${conn.responseCode} for URL: $urlString")
+        }
+
+        conn.inputStream.use { input -> 
+            FileOutputStream(destPath).use { output -> 
+                val data = ByteArray(4096)
+                var count: Int
+                while (input.read(data).also { count = it } != -1) {
+                    output.write(data, 0, count)
+                }
+            } 
+        }
     }
 
     private fun executeCommand(command: String) {
