@@ -54,7 +54,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // অল ফাইল পারমিশনের সেই অপশনটি ফিরিয়ে আনা হলো
     override fun onResume() {
         super.onResume()
         if (!permissionChecked) checkPermission()
@@ -107,20 +106,23 @@ class MainActivity : ComponentActivity() {
     private fun setupLinuxEnvironment() {
         Thread {
             try {
-                runOnUiThread { tvOutput.append("[*] Downloading Official Ubuntu Base (APT)...\n") }
                 val linuxDir = File(filesDir, "linux")
+                // যদি আগে থেকে ফোল্ডার থাকে, তবে আর ডাউনলোড করবে না
+                if (File(linuxDir, "usr/bin/apt").exists()) {
+                    runOnUiThread { tvOutput.append("[SUCCESS] Ubuntu is already installed and ready!\nType: apt update\n") }
+                    return@Thread
+                }
+
+                runOnUiThread { tvOutput.append("[*] Downloading Official Ubuntu Base (APT)...\n") }
                 if (!linuxDir.exists()) linuxDir.mkdirs()
 
                 val tarFile = File(filesDir, "rootfs.tar.gz")
                 downloadFile("https://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-arm64.tar.gz", tarFile.absolutePath)
                 
                 runOnUiThread { tvOutput.append("[*] Extracting (Ignoring Android device node warnings)...\n") }
-                
-                // টারমাক্সের মতো ফেক এরর ইগনোর করা
                 val extProcess = Runtime.getRuntime().exec(arrayOf("tar", "-xf", tarFile.absolutePath, "-C", linuxDir.absolutePath))
                 extProcess.waitFor()
                 
-                // শুধুমাত্র চেক করবে apt ইনস্টল হলো কি না (সাকসেস চেকার)
                 if (File(linuxDir, "usr/bin/apt").exists()) {
                     tarFile.delete()
                     val resolvConf = File(linuxDir, "etc/resolv.conf")
@@ -144,20 +146,31 @@ class MainActivity : ComponentActivity() {
                 if (!proot.exists() || proot.length() < 500000) {
                      downloadFile("https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-aarch64-static", proot.absolutePath)
                 }
-                
                 proot.setExecutable(true, false)
+                
+                // টারমাক্স ট্রিক: অ্যাপের নিজস্ব টেম্পোরারি ডিরেক্টরি তৈরি করা
+                val tmpDir = File(filesDir, "tmp")
+                if (!tmpDir.exists()) tmpDir.mkdirs()
+
+                val rootfs = File(filesDir, "linux").absolutePath
                 
                 val commandList = listOf(
                     proot.absolutePath, "-0", "--link2symlink",
                     "-b", "/sdcard:/sdcard", 
                     "-b", "/dev", "-b", "/proc", "-b", "/sys",
-                    "-r", File(filesDir, "linux").absolutePath, 
+                    "-r", rootfs, 
                     "-w", "/root",
-                    "/usr/bin/env", "PATH=/bin:/usr/bin:/sbin:/usr/sbin", 
-                    "/bin/sh", "-c", cmd
+                    // /usr/bin/env এর বদলে সরাসরি sh ব্যবহার করা হলো এবং PATH ডাইরেক্ট বসানো হলো
+                    "/bin/sh", "-c", "export PATH=/bin:/usr/bin:/sbin:/usr/sbin && export HOME=/root && export TERM=xterm && $cmd"
                 )
                 
                 val pb = ProcessBuilder(commandList)
+                
+                // টারমাক্স ট্রিক: অ্যান্ড্রয়েডের এনভায়রনমেন্ট রেস্ট্রিকশন মুছে কাস্টম টেম্প পাথ যুক্ত করা
+                pb.environment().remove("LD_PRELOAD")
+                pb.environment()["PROOT_TMP_DIR"] = tmpDir.absolutePath
+                pb.environment()["TMPDIR"] = tmpDir.absolutePath
+                
                 pb.redirectErrorStream(true)
                 val p = pb.start()
                 
@@ -188,6 +201,10 @@ class MainActivity : ComponentActivity() {
                 redirect = false
             }
         } while (redirect)
+
+        if (conn.responseCode !in 200..299) {
+            throw Exception("HTTP Download Error ${conn.responseCode} for URL: $urlString")
+        }
 
         conn.inputStream.use { input -> 
             FileOutputStream(destPath).use { output -> 
