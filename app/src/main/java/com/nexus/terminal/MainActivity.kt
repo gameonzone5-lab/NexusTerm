@@ -40,8 +40,7 @@ class MainActivity : ComponentActivity() {
                 tvOutput.append("\n[$currentDirectory]$ $command\n")
                 etInput.text.clear()
 
-                // লিনাক্স রেডি কি না চেক করার শক্তিশালী পদ্ধতি
-                val isLinuxReady = File(filesDir, "linux/bin/sh").exists() && File(filesDir, "linux/usr/bin/apt").exists()
+                val isLinuxReady = File(filesDir, "linux/usr/bin/apt").exists()
 
                 when {
                     command == "setup-linux" -> setupLinuxEnvironment()
@@ -129,9 +128,12 @@ class MainActivity : ComponentActivity() {
                 val extProcess = Runtime.getRuntime().exec(arrayOf("tar", "-xf", tarFile.absolutePath, "-C", linuxDir.absolutePath))
                 extProcess.waitFor()
                 
-                // Toybox Error ইগনোর করে আসল ফাইল চেক করা
                 if (File(linuxDir, "usr/bin/apt").exists()) {
                     tarFile.delete()
+                    
+                    // উবুন্টুর কমান্ডগুলোকে জোরপূর্বক এক্সিকিউটেবল পারমিশন দেওয়া
+                    Runtime.getRuntime().exec(arrayOf("sh", "-c", "chmod -R 755 ${linuxDir.absolutePath}/bin ${linuxDir.absolutePath}/usr/bin")).waitFor()
+
                     val resolvConf = File(linuxDir, "etc/resolv.conf")
                     resolvConf.parentFile.mkdirs()
                     resolvConf.writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
@@ -149,7 +151,6 @@ class MainActivity : ComponentActivity() {
     private fun runLinuxCommand(cmd: String) {
         Thread {
             try {
-                // UserLAnd Secret: অ্যাপের ভেতরের Native Library ফোল্ডার থেকে PRoot কল করা
                 val prootBinary = File(applicationInfo.nativeLibraryDir, "libproot.so")
                 
                 if (!prootBinary.exists()) {
@@ -166,6 +167,8 @@ class MainActivity : ComponentActivity() {
                     prootBinary.absolutePath, "-0", "--link2symlink",
                     "-b", "/sdcard:/sdcard", 
                     "-b", "/dev", "-b", "/proc", "-b", "/sys",
+                    // মূল ফিক্স: PRoot-কে তার টেম্প ফোল্ডার চেনার জন্য মেইন ডিরেক্টরি মাউন্ট করা
+                    "-b", "${filesDir.absolutePath}:${filesDir.absolutePath}",
                     "-r", rootfs, 
                     "-w", "/root",
                     "/bin/sh", "-c", "export PATH=/bin:/usr/bin:/sbin:/usr/sbin && export HOME=/root && export TERM=xterm && export DEBIAN_FRONTEND=noninteractive && $cmd"
