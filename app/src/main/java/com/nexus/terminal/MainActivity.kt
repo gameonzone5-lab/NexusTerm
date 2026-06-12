@@ -1,15 +1,18 @@
 package com.nexus.terminal
 
 import android.os.Bundle
+import android.widget.TextView
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.compose.material3.Text
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            Text("NexusTerm Initialized")
-        }
+        
+        val textView = TextView(this)
+        textView.text = "NexusTerm Successfully Built!"
+        textView.textSize = 24f
+        textView.setPadding(50, 50, 50, 50)
+        
+        setContentView(textView)
     }
 }
