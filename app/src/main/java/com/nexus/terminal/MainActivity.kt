@@ -125,11 +125,13 @@ class MainActivity : ComponentActivity() {
                 if (!prootFile.exists() || prootFile.length() < 500000) {
                     runOnUiThread { tvOutput.append("[*] Downloading PRoot Engine...\n") }
                     downloadFile("https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-aarch64-static", prootFile.absolutePath)
+                    
+                    // Termux ট্রিক: ফাইলটিকে নেটিভভাবে এক্সিকিউটেবল করে দেওয়া
+                    prootFile.setExecutable(true, false)
                     Runtime.getRuntime().exec(arrayOf("chmod", "+x", prootFile.absolutePath)).waitFor()
                 }
 
                 val rootfsTar = File(baseDir, "rootfs.tar.gz")
-                // বাগ ফিক্স: bin ফোল্ডারের বদলে etc ফোল্ডার চেক করা হচ্ছে (সিম্বলিক লিংকের এরর এড়াতে)
                 if (!File(linuxDir, "etc").exists()) {
                     runOnUiThread { tvOutput.append("[*] Downloading Alpine Linux RootFS...\n") }
                     downloadFile("https://dl-cdn.alpinelinux.org/alpine/v3.18/releases/aarch64/alpine-minirootfs-3.18.4-aarch64.tar.gz", rootfsTar.absolutePath)
@@ -193,7 +195,6 @@ class MainActivity : ComponentActivity() {
 
         Thread {
             try {
-                // -0 ফ্ল্যাগ যুক্ত করা হলো এআই প্যাকেজ ইন্সটলে রুট পারমিশন পেতে
                 val pb = ProcessBuilder(
                     prootBinary, "-0", "-b", "$sdcard:/sdcard", "-b", "/dev", "-b", "/proc", "-b", "/sys",
                     "-r", rootfsDir, "-w", "/root", "/bin/sh", "-c", linuxCmd
