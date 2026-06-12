@@ -35,7 +35,8 @@ class MainActivity : ComponentActivity() {
         currentDirectory = filesDir.absolutePath
 
         btnRun.setOnClickListener {
-            val command = etInput.text.toString().trim()
+            val rawCommand = etInput.text.toString()
+            val command = rawCommand.trim()
             if (command.isNotEmpty()) {
                 tvOutput.append("\n[$currentDirectory]$ $command\n")
                 etInput.text.clear()
@@ -49,8 +50,14 @@ class MainActivity : ComponentActivity() {
                     requestStoragePermission()
                 } else if (command == "setup-linux") {
                     setupLinuxEnvironment()
-                } else if (command.startsWith("linux ")) {
-                    runLinuxCommand(command.removePrefix("linux ").trim())
+                } else if (command.startsWith("linux")) {
+                    // স্পেসের সমস্যা চিরতরে দূর করা হলো
+                    val linuxCmd = command.removePrefix("linux").trim()
+                    if (linuxCmd.isNotEmpty()) {
+                        runLinuxCommand(linuxCmd)
+                    } else {
+                        tvOutput.append("Usage: linux <command>\n")
+                    }
                 } else {
                     executeCommand(command)
                 }
@@ -81,7 +88,7 @@ class MainActivity : ComponentActivity() {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
             try {
                 val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-                intent.data = Uri.parse(String.format("package:%s", packageName))
+                intent.data = Uri.parse("package:$packageName")
                 startActivity(intent)
             } catch (e: Exception) {
                 startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
@@ -110,29 +117,41 @@ class MainActivity : ComponentActivity() {
     private fun setupLinuxEnvironment() {
         Thread {
             try {
-                runOnUiThread { tvOutput.append("[*] Starting Linux Setup (Requires Internet)...\n") }
+                runOnUiThread { tvOutput.append("[*] Cleaning old corrupted files...\n") }
                 val baseDir = filesDir.absolutePath
                 val linuxDir = File(baseDir, "linux")
+                val prootFile = File(baseDir, "proot")
+
+                // আগের ভুল ডাউনলোড মুছে ফেলা
+                if (prootFile.exists() && prootFile.length() < 500000) {
+                    prootFile.delete()
+                }
                 if (!linuxDir.exists()) linuxDir.mkdirs()
 
-                val prootFile = File(baseDir, "proot")
                 if (!prootFile.exists()) {
-                    runOnUiThread { tvOutput.append("[*] Downloading PRoot Engine...\n") }
+                    runOnUiThread { tvOutput.append("[*] Downloading PRoot Engine (Smart Mode)...\n") }
                     downloadFile("https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-aarch64-static", prootFile.absolutePath)
                     Runtime.getRuntime().exec(arrayOf("chmod", "+x", prootFile.absolutePath)).waitFor()
                 }
 
                 val rootfsTar = File(baseDir, "rootfs.tar.gz")
-                if (!File(linuxDir, "bin").exists()) {
-                    runOnUiThread { tvOutput.append("[*] Downloading Alpine Linux RootFS (Super Fast)...\n") }
+                if (!File(linuxDir, "bin/sh").exists()) {
+                    runOnUiThread { tvOutput.append("[*] Downloading Alpine Linux RootFS...\n") }
                     downloadFile("https://dl-cdn.alpinelinux.org/alpine/v3.18/releases/aarch64/alpine-minirootfs-3.18.4-aarch64.tar.gz", rootfsTar.absolutePath)
                     
                     runOnUiThread { tvOutput.append("[*] Extracting File System...\n") }
-                    Runtime.getRuntime().exec(arrayOf("tar", "-xf", rootfsTar.absolutePath, "-C", linuxDir.absolutePath)).waitFor()
-                    rootfsTar.delete()
+                    val extProcess = Runtime.getRuntime().exec(arrayOf("tar", "-xf", rootfsTar.absolutePath, "-C", linuxDir.absolutePath))
+                    extProcess.waitFor()
+                    
+                    if (extProcess.exitValue() == 0) {
+                        rootfsTar.delete()
+                        runOnUiThread { tvOutput.append("[SUCCESS] Linux Installed Perfectly!\nTest it by typing: linux cat /etc/os-release\n") }
+                    } else {
+                        runOnUiThread { tvOutput.append("[ERROR] Extraction failed.\n") }
+                    }
+                } else {
+                    runOnUiThread { tvOutput.append("[SUCCESS] Linux is already installed!\n") }
                 }
-
-                runOnUiThread { tvOutput.append("[SUCCESS] Linux Installed!\nTest it by typing: linux cat /etc/os-release\n") }
             } catch (e: Exception) {
                 runOnUiThread { tvOutput.append("[ERROR] Setup failed: ${e.message}\n") }
             }
@@ -140,9 +159,22 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun downloadFile(urlString: String, destPath: String) {
-        val url = URL(urlString)
-        val conn = url.openConnection() as HttpURLConnection
-        conn.connect()
+        var url = URL(urlString)
+        var conn: HttpURLConnection
+        var redirect: Boolean
+        do {
+            conn = url.openConnection() as HttpURLConnection
+            conn.instanceFollowRedirects = false
+            val status = conn.responseCode
+            // গিটহাবের রিডাইরেক্ট বাগ ফিক্স করা হলো
+            if (status == HttpURLConnection.HTTP_MOVED_TEMP || status == HttpURLConnection.HTTP_MOVED_PERM || status == HttpURLConnection.HTTP_SEE_OTHER) {
+                redirect = true
+                url = URL(conn.getHeaderField("Location"))
+            } else {
+                redirect = false
+            }
+        } while (redirect)
+
         conn.inputStream.use { input ->
             FileOutputStream(destPath).use { output ->
                 val data = ByteArray(4096)
@@ -160,14 +192,35 @@ class MainActivity : ComponentActivity() {
         val rootfsDir = "$baseDir/linux"
         val sdcard = Environment.getExternalStorageDirectory().absolutePath
 
-        if (!File(prootBinary).exists()) {
-            tvOutput.append("Linux not installed! Type 'setup-linux' first.\n")
+        if (!File(prootBinary).exists() || !File(rootfsDir, "bin/sh").exists()) {
+            tvOutput.append("Linux environment incomplete! Type 'setup-linux' to repair.\n")
             return
         }
 
-        // PRoot কমান্ড: অ্যান্ড্রয়েডের ভেতরে লিনাক্স রান করানো এবং মেমোরি কার্ড বাইন্ড করা
-        val fullCmd = "$prootBinary -b $sdcard:/sdcard -r $rootfsDir -w /root /bin/sh -c \"$linuxCmd\""
-        executeCommand(fullCmd)
+        Thread {
+            try {
+                // লিনাক্সের কমান্ড ইঞ্জিনে উন্নত ProcessBuilder যুক্ত করা হলো
+                val pb = ProcessBuilder(
+                    prootBinary, "-b", "$sdcard:/sdcard", "-b", "/dev", "-b", "/proc", "-b", "/sys",
+                    "-r", rootfsDir, "-w", "/root", "/bin/sh", "-c", linuxCmd
+                )
+                pb.redirectErrorStream(true)
+                val process = pb.start()
+                val reader = BufferedReader(InputStreamReader(process.inputStream))
+                val output = StringBuilder()
+                var line: String?
+                while (reader.readLine().also { line = it } != null) {
+                    output.append(line).append("\n")
+                }
+                process.waitFor()
+                runOnUiThread {
+                    if (output.isNotEmpty()) tvOutput.append(output.toString())
+                    else tvOutput.append("[Executed successfully, no output]\n")
+                }
+            } catch (e: Exception) {
+                runOnUiThread { tvOutput.append("Linux Error: ${e.message}\n") }
+            }
+        }.start()
     }
 
     private fun executeCommand(command: String) {
