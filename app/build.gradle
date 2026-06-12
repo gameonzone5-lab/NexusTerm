@@ -10,9 +10,9 @@ android {
     defaultConfig {
         applicationId "com.nexus.terminal"
         minSdk 24
-        targetSdk 28
-        versionCode 1
-        versionName "1.0"
+        targetSdk 34  // লেটেস্ট অ্যান্ড্রয়েড সাপোর্ট, কোনো ওয়ার্নিং আসবে না
+        versionCode 2
+        versionName "2.0-UserLAnd-Arch"
     }
 
     compileOptions {

@@ -40,7 +40,8 @@ class MainActivity : ComponentActivity() {
                 tvOutput.append("\n[$currentDirectory]$ $command\n")
                 etInput.text.clear()
 
-                val isLinuxReady = File(filesDir, "linux/usr/bin/apt").exists()
+                // লিনাক্স রেডি কি না চেক করার শক্তিশালী পদ্ধতি
+                val isLinuxReady = File(filesDir, "linux/bin/sh").exists() && File(filesDir, "linux/usr/bin/apt").exists()
 
                 when {
                     command == "setup-linux" -> setupLinuxEnvironment()
@@ -48,7 +49,13 @@ class MainActivity : ComponentActivity() {
                     command == "clear" -> { tvOutput.text = ""; checkPermission() }
                     command.startsWith("cd ") -> handleCdCommand(command)
                     isLinuxReady -> runLinuxCommand(command)
-                    else -> executeCommand(command)
+                    else -> {
+                        if (command.startsWith("apt ")) {
+                            tvOutput.append("Ubuntu is not installed or corrupted. Please run 'setup-linux' first.\n")
+                        } else {
+                            executeCommand(command)
+                        }
+                    }
                 }
             }
         }
@@ -62,11 +69,11 @@ class MainActivity : ComponentActivity() {
     private fun checkPermission() {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
             if (!Environment.isExternalStorageManager()) {
-                tvOutput.append("\n[WARNING] Full Storage Permission Not Granted!\nType 'permit' and press RUN to allow.\n")
+                tvOutput.append("\n[WARNING] Full Storage Permission Required!\nType 'permit' and press RUN to allow.\n")
                 permissionChecked = false
             } else {
                 if (!permissionChecked) {
-                    tvOutput.append("\n[SUCCESS] Storage Ready! Type 'setup-linux' to install pure Termux-like Ubuntu (APT).\n")
+                    tvOutput.append("\n[SUCCESS] Storage Ready! Type 'setup-linux' to install UserLAnd-style Ubuntu.\n")
                     permissionChecked = true
                 }
             }
@@ -107,31 +114,31 @@ class MainActivity : ComponentActivity() {
         Thread {
             try {
                 val linuxDir = File(filesDir, "linux")
-                // যদি আগে থেকে ফোল্ডার থাকে, তবে আর ডাউনলোড করবে না
                 if (File(linuxDir, "usr/bin/apt").exists()) {
-                    runOnUiThread { tvOutput.append("[SUCCESS] Ubuntu is already installed and ready!\nType: apt update\n") }
+                    runOnUiThread { tvOutput.append("[SUCCESS] Ubuntu is already installed!\nType: apt update\n") }
                     return@Thread
                 }
 
-                runOnUiThread { tvOutput.append("[*] Downloading Official Ubuntu Base (APT)...\n") }
+                runOnUiThread { tvOutput.append("[*] Downloading Official Ubuntu Base...\n") }
                 if (!linuxDir.exists()) linuxDir.mkdirs()
 
                 val tarFile = File(filesDir, "rootfs.tar.gz")
                 downloadFile("https://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-arm64.tar.gz", tarFile.absolutePath)
                 
-                runOnUiThread { tvOutput.append("[*] Extracting (Ignoring Android device node warnings)...\n") }
+                runOnUiThread { tvOutput.append("[*] Extracting RootFS (Ignoring symlink errors)...\n") }
                 val extProcess = Runtime.getRuntime().exec(arrayOf("tar", "-xf", tarFile.absolutePath, "-C", linuxDir.absolutePath))
                 extProcess.waitFor()
                 
+                // Toybox Error ইগনোর করে আসল ফাইল চেক করা
                 if (File(linuxDir, "usr/bin/apt").exists()) {
                     tarFile.delete()
                     val resolvConf = File(linuxDir, "etc/resolv.conf")
                     resolvConf.parentFile.mkdirs()
                     resolvConf.writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
                     
-                    runOnUiThread { tvOutput.append("[SUCCESS] Termux-like Ubuntu is ready!\nType: apt update\n") }
+                    runOnUiThread { tvOutput.append("[SUCCESS] UserLAnd Ubuntu is ready!\nType: apt update\n") }
                 } else {
-                    runOnUiThread { tvOutput.append("[ERROR] Critical extraction failed. Core files missing.\n") }
+                    runOnUiThread { tvOutput.append("[ERROR] Critical extraction failed.\n") }
                 }
             } catch (e: Exception) {
                 runOnUiThread { tvOutput.append("[ERROR] Setup failed: ${e.message}\n") }
@@ -142,31 +149,29 @@ class MainActivity : ComponentActivity() {
     private fun runLinuxCommand(cmd: String) {
         Thread {
             try {
-                val proot = File(filesDir, "proot")
-                if (!proot.exists() || proot.length() < 500000) {
-                     downloadFile("https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-aarch64-static", proot.absolutePath)
-                }
-                proot.setExecutable(true, false)
+                // UserLAnd Secret: অ্যাপের ভেতরের Native Library ফোল্ডার থেকে PRoot কল করা
+                val prootBinary = File(applicationInfo.nativeLibraryDir, "libproot.so")
                 
-                // টারমাক্স ট্রিক: অ্যাপের নিজস্ব টেম্পোরারি ডিরেক্টরি তৈরি করা
+                if (!prootBinary.exists()) {
+                    runOnUiThread { tvOutput.append("[ERROR] Core engine missing. Reinstall app.\n") }
+                    return@Thread
+                }
+
                 val tmpDir = File(filesDir, "tmp")
                 if (!tmpDir.exists()) tmpDir.mkdirs()
 
                 val rootfs = File(filesDir, "linux").absolutePath
                 
                 val commandList = listOf(
-                    proot.absolutePath, "-0", "--link2symlink",
+                    prootBinary.absolutePath, "-0", "--link2symlink",
                     "-b", "/sdcard:/sdcard", 
                     "-b", "/dev", "-b", "/proc", "-b", "/sys",
                     "-r", rootfs, 
                     "-w", "/root",
-                    // /usr/bin/env এর বদলে সরাসরি sh ব্যবহার করা হলো এবং PATH ডাইরেক্ট বসানো হলো
-                    "/bin/sh", "-c", "export PATH=/bin:/usr/bin:/sbin:/usr/sbin && export HOME=/root && export TERM=xterm && $cmd"
+                    "/bin/sh", "-c", "export PATH=/bin:/usr/bin:/sbin:/usr/sbin && export HOME=/root && export TERM=xterm && export DEBIAN_FRONTEND=noninteractive && $cmd"
                 )
                 
                 val pb = ProcessBuilder(commandList)
-                
-                // টারমাক্স ট্রিক: অ্যান্ড্রয়েডের এনভায়রনমেন্ট রেস্ট্রিকশন মুছে কাস্টম টেম্প পাথ যুক্ত করা
                 pb.environment().remove("LD_PRELOAD")
                 pb.environment()["PROOT_TMP_DIR"] = tmpDir.absolutePath
                 pb.environment()["TMPDIR"] = tmpDir.absolutePath
@@ -194,17 +199,13 @@ class MainActivity : ComponentActivity() {
             conn.instanceFollowRedirects = false
             val status = conn.responseCode
             
-            if (status == HttpURLConnection.HTTP_MOVED_TEMP || status == HttpURLConnection.HTTP_MOVED_PERM || status == HttpURLConnection.HTTP_SEE_OTHER) {
+            if (status in listOf(HttpURLConnection.HTTP_MOVED_TEMP, HttpURLConnection.HTTP_MOVED_PERM, HttpURLConnection.HTTP_SEE_OTHER)) {
                 redirect = true
                 url = URL(conn.getHeaderField("Location"))
             } else {
                 redirect = false
             }
         } while (redirect)
-
-        if (conn.responseCode !in 200..299) {
-            throw Exception("HTTP Download Error ${conn.responseCode} for URL: $urlString")
-        }
 
         conn.inputStream.use { input -> 
             FileOutputStream(destPath).use { output -> 
