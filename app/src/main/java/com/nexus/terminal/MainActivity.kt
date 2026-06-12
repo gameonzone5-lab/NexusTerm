@@ -22,6 +22,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var btnRun: Button
     
     private var currentDirectory: String = ""
+    private var permissionChecked: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -39,16 +40,35 @@ class MainActivity : ComponentActivity() {
                 tvOutput.append("\n[$currentDirectory]$ $command\n")
                 etInput.text.clear()
 
-                val isLinuxReady = File(filesDir, "linux/etc").exists()
+                val isLinuxReady = File(filesDir, "linux/usr/bin/apt").exists()
 
                 when {
                     command == "setup-linux" -> setupLinuxEnvironment()
                     command == "permit" -> requestStoragePermission()
-                    command == "clear" -> tvOutput.text = ""
+                    command == "clear" -> { tvOutput.text = ""; checkPermission() }
                     command.startsWith("cd ") -> handleCdCommand(command)
-                    // টারমাক্সের হুবহু বিকল্প: লিনাক্স ইন্সটল থাকলে যেকোনো কমান্ড সরাসরি উবুন্টুতে রান হবে
                     isLinuxReady -> runLinuxCommand(command)
                     else -> executeCommand(command)
+                }
+            }
+        }
+    }
+
+    // অল ফাইল পারমিশনের সেই অপশনটি ফিরিয়ে আনা হলো
+    override fun onResume() {
+        super.onResume()
+        if (!permissionChecked) checkPermission()
+    }
+
+    private fun checkPermission() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            if (!Environment.isExternalStorageManager()) {
+                tvOutput.append("\n[WARNING] Full Storage Permission Not Granted!\nType 'permit' and press RUN to allow.\n")
+                permissionChecked = false
+            } else {
+                if (!permissionChecked) {
+                    tvOutput.append("\n[SUCCESS] Storage Ready! Type 'setup-linux' to install pure Termux-like Ubuntu (APT).\n")
+                    permissionChecked = true
                 }
             }
         }
@@ -92,24 +112,24 @@ class MainActivity : ComponentActivity() {
                 if (!linuxDir.exists()) linuxDir.mkdirs()
 
                 val tarFile = File(filesDir, "rootfs.tar.gz")
-                
-                // 100% রিলায়েবল Canonical সার্ভারের অফিশিয়াল উবুন্টু লিংক (কখনো ডিলিট হবে না)
                 downloadFile("https://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-arm64.tar.gz", tarFile.absolutePath)
                 
-                runOnUiThread { tvOutput.append("[*] Extracting Official Ubuntu RootFS...\n") }
+                runOnUiThread { tvOutput.append("[*] Extracting (Ignoring Android device node warnings)...\n") }
+                
+                // টারমাক্সের মতো ফেক এরর ইগনোর করা
                 val extProcess = Runtime.getRuntime().exec(arrayOf("tar", "-xf", tarFile.absolutePath, "-C", linuxDir.absolutePath))
                 extProcess.waitFor()
                 
-                if (extProcess.exitValue() == 0) {
+                // শুধুমাত্র চেক করবে apt ইনস্টল হলো কি না (সাকসেস চেকার)
+                if (File(linuxDir, "usr/bin/apt").exists()) {
                     tarFile.delete()
-                    // ইন্টারনেট এবং DNS ফিক্স
                     val resolvConf = File(linuxDir, "etc/resolv.conf")
                     resolvConf.parentFile.mkdirs()
                     resolvConf.writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
                     
-                    runOnUiThread { tvOutput.append("[SUCCESS] Termux-like Ubuntu is ready! Type: apt update\n") }
+                    runOnUiThread { tvOutput.append("[SUCCESS] Termux-like Ubuntu is ready!\nType: apt update\n") }
                 } else {
-                    runOnUiThread { tvOutput.append("[ERROR] Extraction failed. Try again.\n") }
+                    runOnUiThread { tvOutput.append("[ERROR] Critical extraction failed. Core files missing.\n") }
                 }
             } catch (e: Exception) {
                 runOnUiThread { tvOutput.append("[ERROR] Setup failed: ${e.message}\n") }
@@ -125,7 +145,6 @@ class MainActivity : ComponentActivity() {
                      downloadFile("https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-aarch64-static", proot.absolutePath)
                 }
                 
-                // অ্যান্ড্রয়েডের W^X পলিসি বাইপাস
                 proot.setExecutable(true, false)
                 
                 val commandList = listOf(
@@ -158,8 +177,7 @@ class MainActivity : ComponentActivity() {
         
         do {
             conn = url.openConnection() as HttpURLConnection
-            // সার্ভার ব্লক এড়াতে ব্রাউজার স্পুফিং (ইউজার-এজেন্ট)
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
             conn.instanceFollowRedirects = false
             val status = conn.responseCode
             
@@ -170,10 +188,6 @@ class MainActivity : ComponentActivity() {
                 redirect = false
             }
         } while (redirect)
-
-        if (conn.responseCode !in 200..299) {
-            throw Exception("HTTP Download Error ${conn.responseCode} for URL: $urlString")
-        }
 
         conn.inputStream.use { input -> 
             FileOutputStream(destPath).use { output -> 
