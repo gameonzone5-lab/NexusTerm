@@ -1,6 +1,10 @@
 package com.nexus.terminal
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.os.Environment
+import android.provider.Settings
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
@@ -14,7 +18,6 @@ class MainActivity : ComponentActivity() {
     private lateinit var etInput: EditText
     private lateinit var btnRun: Button
     
-    // টার্মিনালের বর্তমান ফোল্ডার ট্র্যাক করার জন্য
     private var currentDirectory: String = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -25,17 +28,16 @@ class MainActivity : ComponentActivity() {
         etInput = findViewById(R.id.etInput)
         btnRun = findViewById(R.id.btnRun)
 
-        // অ্যাপ খোলার সময় ডিফল্ট ডিরেক্টরি সেট করা (অ্যাপের নিজস্ব সেফ স্টোরেজ)
+        requestStoragePermission()
+
         currentDirectory = filesDir.absolutePath
 
         btnRun.setOnClickListener {
             val command = etInput.text.toString().trim()
             if (command.isNotEmpty()) {
-                // টার্মিনালের মতো পাথ এবং প্রম্পট দেখানো
                 tvOutput.append("\n[$currentDirectory]$ $command\n")
                 etInput.text.clear()
 
-                // 'cd' কমান্ড আলাদাভাবে হ্যান্ডেল করা
                 if (command.startsWith("cd ")) {
                     handleCdCommand(command)
                 } else if (command == "clear") {
@@ -47,12 +49,29 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun requestStoragePermission() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            if (!Environment.isExternalStorageManager()) {
+                try {
+                    val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                    intent.addCategory("android.intent.category.DEFAULT")
+                    intent.data = Uri.parse(String.format("package:%s", applicationContext.packageName))
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    val intent = Intent()
+                    intent.action = Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION
+                    startActivity(intent)
+                }
+            }
+        }
+    }
+
     private fun handleCdCommand(command: String) {
         val newDir = command.substring(3).trim()
         val targetFile = if (newDir.startsWith("/")) File(newDir) else File(currentDirectory, newDir)
         
         if (targetFile.exists() && targetFile.isDirectory) {
-            currentDirectory = targetFile.canonicalPath // ডিরেক্টরি আপডেট করা
+            currentDirectory = targetFile.canonicalPath
         } else {
             tvOutput.append("cd: $newDir: No such file or directory\n")
         }
@@ -61,7 +80,6 @@ class MainActivity : ComponentActivity() {
     private fun executeCommand(command: String) {
         Thread {
             try {
-                // কমান্ড রান করার সময় বর্তমান ডিরেক্টরি বলে দেওয়া
                 val workingDir = File(currentDirectory)
                 val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", command), null, workingDir)
                 
