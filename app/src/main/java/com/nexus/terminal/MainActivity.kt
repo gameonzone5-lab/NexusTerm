@@ -40,22 +40,21 @@ class MainActivity : ComponentActivity() {
                 tvOutput.append("\n[$currentDirectory]$ $command\n")
                 etInput.text.clear()
 
-                // আসল চেক: উবুন্টুর apt ফাইলটি ফিজিক্যালি আছে কি না
                 val isLinuxReady = File(filesDir, "linux/usr/bin/apt").exists()
 
                 when {
+                    command == "setup-linux" -> setupLinuxEnvironment()
                     command == "permit" -> requestStoragePermission()
                     command == "clear" -> { tvOutput.text = ""; checkPermission() }
                     command.startsWith("cd ") -> handleCdCommand(command)
-                    command == "setup-linux" -> setupLinuxEnvironment()
-                    // যদি লিনাক্স না থাকে আর ইউজার apt রান করতে চায়, তাহলে আটকে দেওয়া হবে
-                    (command.startsWith("apt ") || command.startsWith("linux ")) && !isLinuxReady -> {
-                        tvOutput.append("[ERROR] Ubuntu Base is missing or corrupted!\nPlease type 'setup-linux' to install it first.\n")
-                    }
-                    // লিনাক্স রেডি থাকলে PRoot এর মাধ্যমে রান হবে
                     isLinuxReady -> runLinuxCommand(command)
-                    // অন্য সব সাধারণ কমান্ড অ্যান্ড্রয়েডে রান হবে
-                    else -> executeCommand(command)
+                    else -> {
+                        if (command.startsWith("apt ") || command.startsWith("linux ")) {
+                            tvOutput.append("[ERROR] Ubuntu Base is missing or corrupted.\nPlease type 'setup-linux' to install it first.\n")
+                        } else {
+                            executeCommand(command)
+                        }
+                    }
                 }
             }
         }
@@ -73,7 +72,7 @@ class MainActivity : ComponentActivity() {
                 permissionChecked = false
             } else {
                 if (!permissionChecked) {
-                    tvOutput.append("\n[SUCCESS] Environment Ready! Type 'setup-linux' to begin.\n")
+                    tvOutput.append("\n[SUCCESS] Environment Ready! Type 'setup-linux' to install pure Ubuntu.\n")
                     permissionChecked = true
                 }
             }
@@ -115,20 +114,14 @@ class MainActivity : ComponentActivity() {
             try {
                 val linuxDir = File(filesDir, "linux")
                 
-                // আগের কোনো নষ্ট ফাইল থাকলে মুছে ফেলবে
-                if (linuxDir.exists() && !File(linuxDir, "usr/bin/apt").exists()) {
-                    runOnUiThread { tvOutput.append("[*] Cleaning corrupted files...\n") }
-                    linuxDir.deleteRecursively()
-                }
-
                 if (File(linuxDir, "usr/bin/apt").exists()) {
-                    runOnUiThread { tvOutput.append("[SUCCESS] Ubuntu is already perfectly installed!\nType: apt update\n") }
+                    runOnUiThread { tvOutput.append("[SUCCESS] Ubuntu is already installed!\nType: apt update\n") }
                     return@Thread
                 }
 
+                runOnUiThread { tvOutput.append("[*] Downloading Official Ubuntu Base...\n") }
                 if (!linuxDir.exists()) linuxDir.mkdirs()
 
-                runOnUiThread { tvOutput.append("[*] Downloading Official Ubuntu Base (~25MB). Please wait...\n") }
                 val tarFile = File(filesDir, "rootfs.tar.gz")
                 downloadFile("https://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-arm64.tar.gz", tarFile.absolutePath)
                 
@@ -136,16 +129,19 @@ class MainActivity : ComponentActivity() {
                 val extProcess = Runtime.getRuntime().exec(arrayOf("tar", "-xf", tarFile.absolutePath, "-C", linuxDir.absolutePath))
                 extProcess.waitFor()
                 
-                // এক্সট্র্যাকশন সাকসেসফুল কি না তার আসল চেক
                 if (File(linuxDir, "usr/bin/apt").exists()) {
                     tarFile.delete()
+                    
+                    Runtime.getRuntime().exec(arrayOf("chmod", "-R", "755", "${linuxDir.absolutePath}/bin")).waitFor()
+                    Runtime.getRuntime().exec(arrayOf("chmod", "-R", "755", "${linuxDir.absolutePath}/usr/bin")).waitFor()
+
                     val resolvConf = File(linuxDir, "etc/resolv.conf")
                     resolvConf.parentFile.mkdirs()
                     resolvConf.writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
                     
-                    runOnUiThread { tvOutput.append("[SUCCESS] Pure Termux-like Ubuntu is Ready!\nType: apt update\n") }
+                    runOnUiThread { tvOutput.append("[SUCCESS] Termux-like Ubuntu is Ready!\nType: apt update\n") }
                 } else {
-                    runOnUiThread { tvOutput.append("[ERROR] Critical extraction failed. Try again.\n") }
+                    runOnUiThread { tvOutput.append("[ERROR] Critical extraction failed.\n") }
                 }
             } catch (e: Exception) {
                 runOnUiThread { tvOutput.append("[ERROR] Setup failed: ${e.message}\n") }
@@ -156,35 +152,45 @@ class MainActivity : ComponentActivity() {
     private fun runLinuxCommand(cmd: String) {
         Thread {
             try {
-                // UserLAnd Architecture: Native Library Loader
-                val nativeDir = applicationInfo.nativeLibraryDir
-                var prootBinary = File(nativeDir, "libproot.so")
-                
-                // Fallback: যদি প্লে-স্টোর পলিসি লাইব্রেরি প্যাক করতে ফেইল করে, তাহলে লোকালি PRoot নামিয়ে নেবে
-                if (!prootBinary.exists()) {
-                    prootBinary = File(filesDir, "proot")
-                    if (!prootBinary.exists() || prootBinary.length() < 500000) {
-                        downloadFile("https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-aarch64-static", prootBinary.absolutePath)
-                    }
-                    prootBinary.setExecutable(true, false)
+                val prootBinary = File(filesDir, "proot")
+                if (!prootBinary.exists() || prootBinary.length() < 500000) {
+                     downloadFile("https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-aarch64-static", prootBinary.absolutePath)
                 }
+                prootBinary.setExecutable(true, false)
 
-                val rootfs = File(filesDir, "linux").absolutePath
+                val rootfs = File(filesDir, "linux")
                 val tmpDir = File(filesDir, "tmp")
-                if (!tmpDir.exists()) tmpDir.mkdirs()
+                tmpDir.mkdirs()
+                
+                // পুরানো ক্র্যাশ হওয়া ফাইল মুছে ফেলা
+                tmpDir.listFiles()?.forEach { it.deleteRecursively() }
+
+                val realTmpPath = tmpDir.canonicalPath 
+                
+                // THE ULTIMATE FIX: Mirror Path Engine
+                // উবুন্টুর ভেতরে অ্যান্ড্রয়েডের হুবহু ফোল্ডার স্ট্রাকচার তৈরি করা হচ্ছে যাতে PRoot পথ না হারায়
+                var mirrorDir = rootfs
+                val parts = realTmpPath.split("/").filter { it.isNotEmpty() }
+                for (part in parts) {
+                    mirrorDir = File(mirrorDir, part)
+                    if (!mirrorDir.exists()) {
+                        mirrorDir.mkdir()
+                    }
+                }
 
                 val commandList = listOf(
                     prootBinary.absolutePath, "-0", "--link2symlink",
                     "-b", "/sdcard:/sdcard", 
                     "-b", "/dev", "-b", "/proc", "-b", "/sys",
-                    "-r", rootfs, 
+                    "-b", "$realTmpPath:$realTmpPath", // গ্যারান্টিড বাইন্ড মাউন্ট
+                    "-r", rootfs.absolutePath, 
                     "-w", "/root",
-                    "/bin/sh", "-c", "export PATH=/bin:/usr/bin:/sbin:/usr/sbin && export HOME=/root && export TERM=xterm && export DEBIAN_FRONTEND=noninteractive && export TMPDIR=/tmp && $cmd"
+                    "/bin/sh", "-c", "export PATH=/bin:/usr/bin:/sbin:/usr/sbin && export HOME=/root && export TERM=xterm && export DEBIAN_FRONTEND=noninteractive && export TMPDIR=$realTmpPath && $cmd"
                 )
                 
                 val pb = ProcessBuilder(commandList)
                 pb.environment().remove("LD_PRELOAD")
-                pb.environment()["PROOT_TMP_DIR"] = tmpDir.absolutePath
+                pb.environment()["PROOT_TMP_DIR"] = realTmpPath
                 
                 pb.redirectErrorStream(true)
                 val p = pb.start()
