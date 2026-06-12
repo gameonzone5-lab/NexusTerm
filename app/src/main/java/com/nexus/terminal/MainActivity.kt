@@ -9,11 +9,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.nexus.terminal.ui.theme.NexusTerminalTheme
-import com.google.android.gms.ads.MobileAds
-// import com.google.android.gms.ads.AdRequest
 import androidx.compose.ui.viewinterop.AndroidView
-// import com.google.android.gms.ads.AdSize
-import com.google.android.gms.ads.AdView
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -126,7 +122,7 @@ fun BannerAd() {
     AndroidView(
         modifier = Modifier.fillMaxWidth(),
         factory = { context ->
-            AdView(context).apply {
+//             AdView(context).apply {
 // //                 setAdSize(AdSize.BANNER)
 //                 adUnitId = "ca-app-pub-3940256099942544/6300978111" // Test ID
 // //                 loadAd(AdRequest.Builder().build())
