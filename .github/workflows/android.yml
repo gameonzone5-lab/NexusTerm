@@ -1,4 +1,4 @@
-name: NexusTerm Cloud Compiler with Verification
+name: NexusTerm Cloud Compiler
 
 on:
   push:
@@ -18,50 +18,13 @@ jobs:
         distribution: 'temurin'
         cache: gradle
 
-    - name: Fail-Safe Cloud Injection & Extraction
-      run: |
-        mkdir -p app/src/main/jniLibs/arm64-v8a
-        echo "[*] Downloading UserLAnd APK..."
-        wget -q https://github.com/CypherpunkArmory/UserLAnd/releases/download/v2.8.3/app-release.apk -O temp.apk
-        
-        echo "[*] Extracting ALL native libraries safely (ignoring exact path errors)..."
-        # || true যুক্ত করা হয়েছে যাতে ফাইল না পেলেও বিল্ড ক্র্যাশ না করে
-        unzip -j -o temp.apk "*.so" -d app/src/main/jniLibs/arm64-v8a/ || true
-        
-        echo "=== EXTRACTED LIBS LOG ==="
-        ls -la app/src/main/jniLibs/arm64-v8a/
-        
-        cd app/src/main/jniLibs/arm64-v8a/
-        
-        # জাদুকরী রিনেম লজিক (যে নামেই থাকুক না কেন, ঠিক করে নেবে)
-        if [ -f "libuserland-exec.so" ]; then
-            mv libuserland-exec.so libproot.so
-        fi
-        if [ -f "libuserland-exec-loader.so" ]; then
-            mv libuserland-exec-loader.so libproot-loader.so
-            cp libproot-loader.so libproot-loader64.so
-        fi
-        
-        # যদি APK-তে ইঞ্জিন না থাকে, তবে অটোমেটিক ফলব্যাক হিসেবে স্ট্যাটিক ইঞ্জিন নামিয়ে নেবে
-        if [ ! -f "libproot.so" ]; then
-            echo "[WARNING] PRoot not found in APK! Downloading Universal Static PRoot..."
-            wget -q https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-aarch64-static -O libproot.so
-        fi
-        
-        rm -f ../../../../temp.apk
-
-    - name: Build APK with doNotStrip
+    - name: Build SIGNED Debug APK
       run: |
         chmod +x gradlew
-        ./gradlew assembleRelease
+        ./gradlew assembleDebug
 
-    - name: Post-Build Verification
-      run: |
-        echo "=== FINAL APK LIBS VERIFICATION ==="
-        unzip -l app/build/outputs/apk/release/app-release-unsigned.apk | grep lib || true
-
-    - name: Upload Verified Output
+    - name: Upload Installable APK
       uses: actions/upload-artifact@v4
       with:
-        name: NexusTerm-PlayStore-Ready
-        path: app/build/outputs/apk/release/app-release-unsigned.apk
+        name: NexusTerm-Signed-Installable
+        path: app/build/outputs/apk/debug/app-debug.apk
