@@ -147,29 +147,35 @@ class MainActivity : ComponentActivity() {
         Thread {
             try {
                 val prootBinary = File(filesDir, "proot")
+                
+                // জাদুকরী ফিক্স: ইন্টারনেটের বদলে অ্যাপের ভেতর থেকেই ফাইলটি বের করে নেওয়া হচ্ছে
                 if (!prootBinary.exists() || prootBinary.length() < 500000) {
-                     runOnUiThread { tvOutput.append("[*] Downloading Standalone Execution Engine...\n") }
-                     downloadFile("https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-aarch64-static", prootBinary.absolutePath)
+                     runOnUiThread { tvOutput.append("[*] Extracting Engine from Internal Assets...\n") }
+                     assets.open("proot").use { input ->
+                         FileOutputStream(prootBinary).use { output ->
+                             input.copyTo(output)
+                         }
+                     }
                 }
                 prootBinary.setExecutable(true, false)
 
                 val rootfs = File(filesDir, "linux").absolutePath
                 val tmpDir = File(filesDir, "tmp")
-                tmpDir.mkdirs() // টেম্প ফোল্ডার তৈরি করা হলো
+                tmpDir.mkdirs() 
 
-                // ফিক্স ১: কমান্ড থেকে /usr/bin/env বাদ দেওয়া হলো এবং সরাসরি /bin/sh রান করা হলো
+                val appDataDir = filesDir.parentFile?.absolutePath ?: "/data/user/0/$packageName"
+
                 val commandList = listOf(
                     prootBinary.absolutePath, "--link2symlink", "-0",
                     "-r", rootfs, 
                     "-b", "/dev", "-b", "/proc", "-b", "/sys", "-b", "/sdcard",
-                    "-b", "${filesDir.absolutePath}:${filesDir.absolutePath}", // ফিক্স ২: সিকিউর ফোল্ডার বাইন্ড
+                    "-b", "${filesDir.absolutePath}:${filesDir.absolutePath}", 
                     "-w", "/root",
                     "/bin/sh", "-c", cmd
                 )
                 
                 val pb = ProcessBuilder(commandList)
                 
-                // ফিক্স ৩: এনভায়রনমেন্ট ভেরিয়েবলগুলো ফোর্সফুলি সেট করা যাতে PRoot টেম্প ফোল্ডার খুঁজে পায়
                 val env = pb.environment()
                 env.clear()
                 env["HOME"] = "/root"
