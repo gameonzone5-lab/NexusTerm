@@ -72,7 +72,7 @@ class MainActivity : ComponentActivity() {
                 permissionChecked = false
             } else {
                 if (!permissionChecked) {
-                    tvOutput.append("\n[READY] Type 'setup-linux' to install pure Ubuntu.\n")
+                    tvOutput.append("\n[SUCCESS] Ready! Type 'setup-linux' to install pure Ubuntu.\n")
                     permissionChecked = true
                 }
             }
@@ -146,7 +146,6 @@ class MainActivity : ComponentActivity() {
     private fun runLinuxCommand(cmd: String) {
         Thread {
             try {
-                // সরাসরি নিজস্ব ফোল্ডার থেকে PRoot রান করা (Target SDK 28 এর কারণে কোনো W^X ব্লক হবে না)
                 val prootBinary = File(filesDir, "proot")
                 if (!prootBinary.exists() || prootBinary.length() < 500000) {
                      runOnUiThread { tvOutput.append("[*] Downloading Standalone Execution Engine...\n") }
@@ -156,27 +155,29 @@ class MainActivity : ComponentActivity() {
 
                 val rootfs = File(filesDir, "linux").absolutePath
                 val tmpDir = File(filesDir, "tmp")
-                tmpDir.mkdirs()
-                
-                // সবচেয়ে জরুরি ফিক্স: PRoot যাতে তার Temp ফাইলগুলোর পথ না হারায়
-                val appDataDir = filesDir.parentFile?.absolutePath ?: "/data/user/0/$packageName"
+                tmpDir.mkdirs() // টেম্প ফোল্ডার তৈরি করা হলো
 
+                // ফিক্স ১: কমান্ড থেকে /usr/bin/env বাদ দেওয়া হলো এবং সরাসরি /bin/sh রান করা হলো
                 val commandList = listOf(
                     prootBinary.absolutePath, "--link2symlink", "-0",
                     "-r", rootfs, 
                     "-b", "/dev", "-b", "/proc", "-b", "/sys", "-b", "/sdcard",
-                    "-b", "$appDataDir:$appDataDir", // Bind app directory
+                    "-b", "${filesDir.absolutePath}:${filesDir.absolutePath}", // ফিক্স ২: সিকিউর ফোল্ডার বাইন্ড
                     "-w", "/root",
-                    "/usr/bin/env", "-i",
-                    "HOME=/root",
-                    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-                    "TERM=xterm",
-                    "PROOT_TMP_DIR=${tmpDir.absolutePath}",
-                    "TMPDIR=${tmpDir.absolutePath}",
                     "/bin/sh", "-c", cmd
                 )
                 
                 val pb = ProcessBuilder(commandList)
+                
+                // ফিক্স ৩: এনভায়রনমেন্ট ভেরিয়েবলগুলো ফোর্সফুলি সেট করা যাতে PRoot টেম্প ফোল্ডার খুঁজে পায়
+                val env = pb.environment()
+                env.clear()
+                env["HOME"] = "/root"
+                env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                env["TERM"] = "xterm"
+                env["PROOT_TMP_DIR"] = tmpDir.absolutePath
+                env["TMPDIR"] = tmpDir.absolutePath
+                
                 pb.redirectErrorStream(true)
                 val p = pb.start()
                 
@@ -203,18 +204,14 @@ class MainActivity : ComponentActivity() {
             if (status in listOf(HttpURLConnection.HTTP_MOVED_TEMP, HttpURLConnection.HTTP_MOVED_PERM, HttpURLConnection.HTTP_SEE_OTHER)) {
                 redirect = true
                 url = URL(conn.getHeaderField("Location"))
-            } else {
-                redirect = false
-            }
+            } else { redirect = false }
         } while (redirect)
 
         conn.inputStream.use { input -> 
             FileOutputStream(destPath).use { output -> 
                 val data = ByteArray(4096)
                 var count: Int
-                while (input.read(data).also { count = it } != -1) {
-                    output.write(data, 0, count)
-                }
+                while (input.read(data).also { count = it } != -1) { output.write(data, 0, count) }
             } 
         }
     }
@@ -232,9 +229,7 @@ class MainActivity : ComponentActivity() {
                 while (errorReader.readLine().also { line = it } != null) output.append(line).append("\n")
                 process.waitFor()
                 runOnUiThread { if (output.isNotEmpty()) tvOutput.append(output.toString()) }
-            } catch (e: Exception) {
-                runOnUiThread { tvOutput.append("Error: ${e.message}\n") }
-            }
+            } catch (e: Exception) { runOnUiThread { tvOutput.append("Error: ${e.message}\n") } }
         }.start()
     }
 }
