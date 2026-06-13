@@ -73,7 +73,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun printWelcomeMessage() {
-        tvOutput.append("NexusTerm v6.0-BUSYBOX (Symlink Protected)\n")
+        tvOutput.append("NexusTerm v6.1-BUSYBOX (Symlink Protected)\n")
         tvOutput.append("Type 'setup-linux' to extract Ubuntu safely.\n")
         tvOutput.append("Type 'check-symlinks' to verify Android tar didn't break files.\n")
         tvOutput.append("Type 'health-check' to verify RootFS execution.\n")
@@ -86,7 +86,6 @@ class MainActivity : ComponentActivity() {
         tvOutput.append("===================\n")
     }
 
-    // চ্যাটজিপিটি/ক্লডের কথামতো সিমলিংক চেক করার কমান্ড
     private fun checkSymlinks() {
         runOnUiThread { tvOutput.append("=== CHECKING LINUX SYMLINKS ===\n") }
         executeCommand("ls -la ${filesDir.absolutePath}/linux/bin/sh")
@@ -122,14 +121,12 @@ class MainActivity : ComponentActivity() {
                 return@thread
             }
 
-            // Test 1: Native
             try {
                 val p1 = ProcessBuilder(prootBinary.absolutePath, "--version").redirectErrorStream(true).start()
                 if (p1.waitFor() == 0) runOnUiThread { tvOutput.append("[PASS] Phase 1: PRoot executes natively.\n") }
                 else runOnUiThread { tvOutput.append("[FAIL] Phase 1: PRoot execution failed.\n") }
             } catch (e: Exception) {}
 
-            // Test 2: Guest /bin/sh (AI এর পরামর্শ অনুযায়ী)
             try {
                 val p2 = ProcessBuilder(prootBinary.absolutePath, "-0", "-r", rootfs, "/bin/sh", "-c", "echo OK")
                     .redirectErrorStream(true).start()
@@ -141,7 +138,6 @@ class MainActivity : ComponentActivity() {
                 }
             } catch (e: Exception) {}
 
-            // Test 3: Guest apt
             try {
                 val p3 = ProcessBuilder(prootBinary.absolutePath, "-0", "-r", rootfs, "/usr/bin/apt", "--version")
                     .redirectErrorStream(true).start()
@@ -181,7 +177,6 @@ class MainActivity : ComponentActivity() {
                     downloadFile("https://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-arm64.tar.gz", tarFile.absolutePath)
                 }
 
-                // THE ULTIMATE FIX: Downloading Static BusyBox to bypass Android's broken tar
                 val busybox = File(filesDir, "busybox")
                 if (!busybox.exists()) {
                     runOnUiThread { tvOutput.append("[*] Downloading Linux BusyBox for safe extraction...\n") }
@@ -265,6 +260,24 @@ class MainActivity : ComponentActivity() {
             } finally {
                 if (wakeLock?.isHeld == true) wakeLock?.release()
             }
+        }
+    }
+
+    // এই সেই ফাংশনটি যা আমি আগের বার দিতে ভুলে গিয়েছিলাম!
+    private fun executeCommand(command: String) {
+        thread {
+            try {
+                val workingDir = File(currentDirectory)
+                val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", command), null, workingDir)
+                val reader = BufferedReader(InputStreamReader(process.inputStream))
+                val errorReader = BufferedReader(InputStreamReader(process.errorStream))
+                val output = StringBuilder()
+                var line: String?
+                while (reader.readLine().also { line = it } != null) output.append(line).append("\n")
+                while (errorReader.readLine().also { line = it } != null) output.append(line).append("\n")
+                process.waitFor()
+                runOnUiThread { if (output.isNotEmpty()) tvOutput.append(output.toString()) }
+            } catch (e: Exception) { runOnUiThread { tvOutput.append("Error: ${e.message}\n") } }
         }
     }
 
