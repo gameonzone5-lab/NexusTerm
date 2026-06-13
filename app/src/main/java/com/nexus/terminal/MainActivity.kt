@@ -118,7 +118,6 @@ class MainActivity : ComponentActivity() {
                 runOnUiThread { tvOutput.append("[*] Preparing Ubuntu Base...\n") }
                 if (!linuxDir.exists()) linuxDir.mkdirs()
 
-                // শুধুমাত্র যদি apt না থাকে তবেই ডাউনলোড করবে
                 if (!File(linuxDir, "usr/bin/apt").exists()) {
                     val tarFile = File(filesDir, "rootfs.tar.gz")
                     downloadFile("https://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-arm64.tar.gz", tarFile.absolutePath)
@@ -130,19 +129,17 @@ class MainActivity : ComponentActivity() {
                 }
 
                 if (File(linuxDir, "usr/bin/apt").exists()) {
-                    // ফিক্স ১: DNS Resolution Fix
                     val resolvConf = File(linuxDir, "etc/resolv.conf")
                     resolvConf.parentFile.mkdirs()
                     resolvConf.writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
                     
-                    // ফিক্স ২: Android Network Block Fix (APT Sandbox Bypass)
                     val aptConf = File(linuxDir, "etc/apt/apt.conf.d/99nexus")
                     aptConf.parentFile.mkdirs()
                     aptConf.writeText("APT::Sandbox::User \"root\";\n")
 
                     runOnUiThread { tvOutput.append("[SUCCESS] Termux-like Ubuntu is Ready!\nType: apt update\n") }
                 } else {
-                    runOnUiThread { tvOutput.append("[ERROR] Critical extraction failed.\n") }
+                    runOnUiThread { tvOutput.append("[ERROR] Critical extraction failed. Try clearing app data.\n") }
                 }
             } catch (e: Exception) {
                 runOnUiThread { tvOutput.append("[ERROR] Setup failed: ${e.message}\n") }
@@ -165,7 +162,7 @@ class MainActivity : ComponentActivity() {
 
                 val rootfs = File(filesDir, "linux").absolutePath
                 val tmpDir = File(filesDir, "tmp")
-                tmpDir.mkdirs()
+                tmpDir.mkdirs() 
 
                 val appDataDir = filesDir.parentFile?.absolutePath ?: "/data/user/0/$packageName"
 
@@ -179,6 +176,7 @@ class MainActivity : ComponentActivity() {
                 )
                 
                 val pb = ProcessBuilder(commandList)
+                
                 val env = pb.environment()
                 env.clear()
                 env["HOME"] = "/root"
@@ -187,10 +185,12 @@ class MainActivity : ComponentActivity() {
                 env["PROOT_TMP_DIR"] = tmpDir.absolutePath
                 env["TMPDIR"] = tmpDir.absolutePath
                 
+                // জাদুকরী সমাধান: Android Kernel কে বাধ্য করা যেন সে PRoot কে ব্লক না করে
+                env["PROOT_NO_SECCOMP"] = "1" 
+                
                 pb.redirectErrorStream(true)
                 val p = pb.start()
                 
-                // ফিক্স ৩: রিয়েল-টাইম টার্মিনাল রিডিং (আর কোনো হ্যাং বা ফ্রিজ হবে না)
                 val reader = InputStreamReader(p.inputStream)
                 val buffer = CharArray(1024)
                 var readCount: Int
@@ -198,15 +198,22 @@ class MainActivity : ComponentActivity() {
                     val outputChunk = String(buffer, 0, readCount)
                     runOnUiThread { 
                         tvOutput.append(outputChunk) 
-                        // Auto-scroll logic
                         val parent = tvOutput.parent
                         if (parent is ScrollView) {
                             parent.post { parent.fullScroll(android.view.View.FOCUS_DOWN) }
                         }
                     }
                 }
-                p.waitFor()
-                runOnUiThread { tvOutput.append("\n") }
+                
+                // প্রসেস যদি ক্র্যাশ করে তবে কেন ক্র্যাশ করল তার কোড প্রিন্ট করবে
+                val exitCode = p.waitFor()
+                runOnUiThread { 
+                    if (exitCode != 0) {
+                        tvOutput.append("[Process exited with code $exitCode]\n")
+                    } else {
+                        tvOutput.append("\n") 
+                    }
+                }
                 
             } catch (e: Exception) { 
                 runOnUiThread { tvOutput.append("Linux Error: ${e.message}\n") } 
