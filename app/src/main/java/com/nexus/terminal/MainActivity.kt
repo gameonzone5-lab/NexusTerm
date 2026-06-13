@@ -38,7 +38,6 @@ class MainActivity : ComponentActivity() {
 
         currentDirectory = filesDir.absolutePath
 
-        // ব্যাকগ্রাউন্ডে সিপিইউ জাগিয়ে রাখার জন্য WakeLock ইনিশিয়ালাইজ করা
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NexusTerm::BackgroundExecution")
 
@@ -75,10 +74,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        // অ্যাপ বন্ধ হলে WakeLock রিলিজ করা
-        if (wakeLock?.isHeld == true) {
-            wakeLock?.release()
-        }
+        if (wakeLock?.isHeld == true) wakeLock?.release()
     }
 
     private fun checkPermission() {
@@ -127,15 +123,14 @@ class MainActivity : ComponentActivity() {
 
     private fun setupLinuxEnvironment() {
         Thread {
-            // সেভ গার্ড: স্ক্রিন অফ হলেও এক্সট্র্যাকশন চলবে (ম্যাক্সিমাম ২০ মিনিট)
             wakeLock?.acquire(20 * 60 * 1000L)
             try {
                 val linuxDir = File(filesDir, "linux")
                 
-                runOnUiThread { tvOutput.append("[*] Preparing Ubuntu Base (Background Safe)...\n") }
+                runOnUiThread { tvOutput.append("[*] Initiating Deep Hacker-Style Extraction...\n") }
                 
                 if (!File(linuxDir, "usr/bin/apt").exists()) {
-                    linuxDir.deleteRecursively() 
+                    linuxDir.deleteRecursively()
                     linuxDir.mkdirs()
                     
                     val tarFile = File(filesDir, "rootfs.tar.gz")
@@ -143,50 +138,17 @@ class MainActivity : ComponentActivity() {
                         downloadFile("https://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-arm64.tar.gz", tarFile.absolutePath)
                     }
                     
-                    val prootBinary = File(filesDir, "proot")
-                    if (!prootBinary.exists() || prootBinary.length() < 500000) {
-                        assets.open("proot").use { input ->
-                            FileOutputStream(prootBinary).use { output ->
-                                input.copyTo(output)
-                            }
-                        }
-                    }
-                    prootBinary.setExecutable(true, false)
-
-                    // ফিক্স: এক্সট্র্যাক্ট করার সময়ও Temp ফোল্ডার তৈরি ও চেনানো
-                    val tmpDir = File(filesDir, "tmp")
-                    tmpDir.mkdirs()
+                    runOnUiThread { tvOutput.append("[*] Unpacking RootFS natively (Background Safe)...\n") }
                     
-                    runOnUiThread { tvOutput.append("[*] Extracting RootFS Safely via PRoot...\n") }
+                    // HACKING STYLE: Native Shell Script Execution (Ignore non-fatal Android tar errors)
+                    val extractScript = File(filesDir, "extract.sh")
+                    extractScript.writeText("#!/system/bin/sh\ntar -xf ${tarFile.absolutePath} -C ${linuxDir.absolutePath} > /dev/null 2>&1\nexit 0\n")
+                    extractScript.setExecutable(true)
                     
-                    val pb = ProcessBuilder(
-                        prootBinary.absolutePath, "--link2symlink", "-0",
-                        "tar", "-xf", tarFile.absolutePath, "-C", linuxDir.absolutePath
-                    )
-                    
-                    // Temp ফোল্ডারের পাথ এখানে দেওয়া হলো, যাতে error না আসে
-                    pb.environment()["PROOT_NO_SECCOMP"] = "1"
-                    pb.environment()["PROOT_TMP_DIR"] = tmpDir.absolutePath
-                    pb.environment()["TMPDIR"] = tmpDir.absolutePath
-                    
-                    pb.redirectErrorStream(true)
-                    val p = pb.start()
-                    
-                    val reader = InputStreamReader(p.inputStream)
-                    val buffer = CharArray(1024)
-                    var readCount: Int
-                    while (reader.read(buffer).also { readCount = it } != -1) {
-                        val outputChunk = String(buffer, 0, readCount)
-                        runOnUiThread { 
-                            tvOutput.append(outputChunk) 
-                            val parent = tvOutput.parent
-                            if (parent is ScrollView) {
-                                parent.post { parent.fullScroll(android.view.View.FOCUS_DOWN) }
-                            }
-                        }
-                    }
+                    val p = Runtime.getRuntime().exec(arrayOf(extractScript.absolutePath))
                     p.waitFor()
                     tarFile.delete()
+                    extractScript.delete()
                 }
 
                 if (File(linuxDir, "usr/bin/apt").exists()) {
@@ -198,24 +160,20 @@ class MainActivity : ComponentActivity() {
                     aptConf.parentFile.mkdirs()
                     aptConf.writeText("APT::Sandbox::User \"root\";\n")
 
-                    runOnUiThread { tvOutput.append("[SUCCESS] Termux-like Ubuntu is Ready!\nType: apt update\n") }
+                    runOnUiThread { tvOutput.append("[SUCCESS] RootFS is Armed and Ready!\nType: apt update\n") }
                 } else {
-                    runOnUiThread { tvOutput.append("[ERROR] Critical extraction failed.\n") }
+                    runOnUiThread { tvOutput.append("[ERROR] Native Extraction Failed.\n") }
                 }
             } catch (e: Exception) {
                 runOnUiThread { tvOutput.append("[ERROR] Setup failed: ${e.message}\n") }
             } finally {
-                // কাজ শেষ হলে WakeLock রিলিজ করা
-                if (wakeLock?.isHeld == true) {
-                    wakeLock?.release()
-                }
+                if (wakeLock?.isHeld == true) wakeLock?.release()
             }
         }.start()
     }
 
     private fun runLinuxCommand(cmd: String) {
         Thread {
-            // কমান্ড চালানোর সময়ও ব্যাকগ্রাউন্ড প্রসেস অন রাখা হলো
             wakeLock?.acquire(15 * 60 * 1000L)
             try {
                 val prootBinary = File(filesDir, "proot")
@@ -232,28 +190,23 @@ class MainActivity : ComponentActivity() {
                 val tmpDir = File(filesDir, "tmp")
                 tmpDir.mkdirs() 
 
-                val appDataDir = filesDir.parentFile?.absolutePath ?: "/data/user/0/$packageName"
-
-                val commandList = listOf(
-                    prootBinary.absolutePath, "--link2symlink", "-0",
-                    "-r", rootfs, 
-                    "-b", "/dev", "-b", "/proc", "-b", "/sys", "-b", "/sdcard",
-                    "-b", "${filesDir.absolutePath}:${filesDir.absolutePath}", 
-                    "-w", "/root",
-                    "/bin/sh", "-c", cmd
+                // NETHUNTER HACKING STYLE: Invisible Wrapper Script
+                // এই স্ক্রিপ্টটি অ্যান্ড্রয়েডের হোস্ট এনভায়রনমেন্ট ঠিক রেখে, শুধুমাত্র উবুন্টুর জন্য নতুন এনভায়রনমেন্ট তৈরি করবে।
+                val runScript = File(filesDir, "run_cmd.sh")
+                runScript.writeText("#!/system/bin/sh\n" +
+                    "export PROOT_NO_SECCOMP=1\n" +
+                    "export PROOT_TMP_DIR=${tmpDir.absolutePath}\n" +
+                    "export TMPDIR=${tmpDir.absolutePath}\n" +
+                    "unset LD_PRELOAD\n" +
+                    "${prootBinary.absolutePath} -0 -r $rootfs " +
+                    "-b /dev -b /proc -b /sys -b /sdcard " +
+                    "-w /root " +
+                    "/usr/bin/env -i HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin TERM=xterm " +
+                    "/bin/bash -c \"$cmd\"\n"
                 )
-                
-                val pb = ProcessBuilder(commandList)
-                
-                val env = pb.environment()
-                env.clear()
-                env["HOME"] = "/root"
-                env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-                env["TERM"] = "xterm"
-                env["PROOT_TMP_DIR"] = tmpDir.absolutePath
-                env["TMPDIR"] = tmpDir.absolutePath
-                env["PROOT_NO_SECCOMP"] = "1" 
-                
+                runScript.setExecutable(true)
+
+                val pb = ProcessBuilder(runScript.absolutePath)
                 pb.redirectErrorStream(true)
                 val p = pb.start()
                 
@@ -272,19 +225,17 @@ class MainActivity : ComponentActivity() {
                 }
                 
                 val exitCode = p.waitFor()
+                runScript.delete() // কাজ শেষে হ্যাকিং স্ক্রিপ্ট গায়েব করে দেওয়া
+                
                 runOnUiThread { 
-                    if (exitCode != 0) {
-                        tvOutput.append("[Process exited with code $exitCode]\n")
-                    } else {
-                        tvOutput.append("\n") 
-                    }
+                    if (exitCode != 0) tvOutput.append("[Process exited with code $exitCode]\n") 
+                    else tvOutput.append("\n") 
                 }
+                
             } catch (e: Exception) { 
-                runOnUiThread { tvOutput.append("Linux Error: ${e.message}\n") } 
+                runOnUiThread { tvOutput.append("Execution Error: ${e.message}\n") } 
             } finally {
-                if (wakeLock?.isHeld == true) {
-                    wakeLock?.release()
-                }
+                if (wakeLock?.isHeld == true) wakeLock?.release()
             }
         }.start()
     }
