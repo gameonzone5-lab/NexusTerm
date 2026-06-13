@@ -135,7 +135,7 @@ class MainActivity : ComponentActivity() {
                     resolvConf.parentFile.mkdirs()
                     resolvConf.writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
                     
-                    runOnUiThread { tvOutput.append("[SUCCESS] Termux-like Ubuntu is Ready!\nType: apt update\n") }
+                    runOnUiThread { tvOutput.append("[SUCCESS] Ubuntu is Ready!\nType: apt update\n") }
                 } else {
                     runOnUiThread { tvOutput.append("[ERROR] Critical extraction failed.\n") }
                 }
@@ -148,12 +148,17 @@ class MainActivity : ComponentActivity() {
     private fun runLinuxCommand(cmd: String) {
         Thread {
             try {
-                // THE ULTIMATE BYPASS: Android-এর নিজস্ব Native Library ফোল্ডার থেকে PRoot রান করা
+                // THE ULTIMATE BYPASS: UserLAnd Loader Injection
                 val nativeLibraryDir = applicationInfo.nativeLibraryDir
                 val prootBinary = File(nativeLibraryDir, "libproot.so")
                 
-                if (!prootBinary.exists()) {
-                    runOnUiThread { tvOutput.append("[CRITICAL] PRoot Native Library not found! Reinstall the APK.\n") }
+                // UserLAnd এর loader ফাইলটি ডায়নামিক ভাবে খোঁজা
+                var loaderBinary = File(nativeLibraryDir, "libproot-loader.so")
+                if (!loaderBinary.exists()) loaderBinary = File(nativeLibraryDir, "libloader.so")
+                if (!loaderBinary.exists()) loaderBinary = File(nativeLibraryDir, "libproot-loader64.so")
+
+                if (!prootBinary.exists() || !loaderBinary.exists()) {
+                    runOnUiThread { tvOutput.append("[CRITICAL] UserLAnd Execution Emulator missing! Reinstall APK.\n") }
                     return@Thread
                 }
 
@@ -183,6 +188,11 @@ class MainActivity : ComponentActivity() {
                 val pb = ProcessBuilder(commandList)
                 pb.environment().remove("LD_PRELOAD")
                 pb.environment()["PROOT_TMP_DIR"] = realTmpPath
+                
+                // কার্নেল ব্লক বাইপাস করার জন্য ম্যাজিক ভেরিয়েবল সেট করা
+                pb.environment()["PROOT_LOADER"] = loaderBinary.absolutePath
+                pb.environment()["PROOT_LOADER_64"] = loaderBinary.absolutePath
+                pb.environment()["PROOT_NO_SECCOMP"] = "1"
                 
                 pb.redirectErrorStream(true)
                 val p = pb.start()
