@@ -15,7 +15,6 @@ android {
         versionName "12.0-TermuxFixed"
     }
 
-    // গিটহাবকে বাধ্য করা যেন সে SDK 28 এর ওয়ার্নিং ইগনোর করে বিল্ড কমপ্লিট করে
     lintOptions {
         checkReleaseBuilds false
         abortOnError false
@@ -31,4 +30,6 @@ dependencies {
     implementation 'androidx.core:core-ktx:1.12.0'
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.11.0'
+    // Hermes Agent-এর বলা নতুন লাইব্রেরি
+    implementation 'org.apache.commons:commons-compress:1.26.0'
 }
