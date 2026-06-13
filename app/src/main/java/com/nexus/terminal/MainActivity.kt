@@ -15,6 +15,7 @@ import java.io.FileOutputStream
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
+import android.system.Os
 
 class MainActivity : ComponentActivity() {
     private lateinit var tvOutput: TextView
@@ -132,8 +133,11 @@ class MainActivity : ComponentActivity() {
                 if (File(linuxDir, "usr/bin/apt").exists()) {
                     tarFile.delete()
                     
-                    Runtime.getRuntime().exec(arrayOf("chmod", "-R", "755", "${linuxDir.absolutePath}/bin")).waitFor()
-                    Runtime.getRuntime().exec(arrayOf("chmod", "-R", "755", "${linuxDir.absolutePath}/usr/bin")).waitFor()
+                    // ব্রুট-ফোর্স লিনাক্স কার্নেল পারমিশন
+                    try {
+                        Runtime.getRuntime().exec(arrayOf("/system/bin/chmod", "-R", "777", "${linuxDir.absolutePath}/bin")).waitFor()
+                        Runtime.getRuntime().exec(arrayOf("/system/bin/chmod", "-R", "777", "${linuxDir.absolutePath}/usr/bin")).waitFor()
+                    } catch (e: Exception) {}
 
                     val resolvConf = File(linuxDir, "etc/resolv.conf")
                     resolvConf.parentFile.mkdirs()
@@ -156,33 +160,39 @@ class MainActivity : ComponentActivity() {
                 if (!prootBinary.exists() || prootBinary.length() < 500000) {
                      downloadFile("https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-aarch64-static", prootBinary.absolutePath)
                 }
+
+                // THE ULTIMATE BYPASS: কার্নেল লেভেল থেকে জোরপূর্বক এক্সিকিউট পারমিশন নেওয়া
+                try { Os.chmod(prootBinary.absolutePath, 511) /* 511 = 0777 */ } catch (e: Exception) {}
+                Runtime.getRuntime().exec(arrayOf("/system/bin/chmod", "777", prootBinary.absolutePath)).waitFor()
                 prootBinary.setExecutable(true, false)
+
+                // যদি সিস্টেম এরপরেও ব্লক করে, তবে ইউজারকে আসল কারণ জানানো
+                if (!prootBinary.canExecute()) {
+                    runOnUiThread { tvOutput.append("[CRITICAL] Android has permanently locked this app folder due to old cache. You MUST UNINSTALL the app completely and reinstall to unlock it.\n") }
+                    return@Thread
+                }
 
                 val rootfs = File(filesDir, "linux")
                 val tmpDir = File(filesDir, "tmp")
                 tmpDir.mkdirs()
+                try { Os.chmod(tmpDir.absolutePath, 511) } catch(e: Exception){}
+                Runtime.getRuntime().exec(arrayOf("/system/bin/chmod", "777", tmpDir.absolutePath)).waitFor()
                 
-                // পুরানো ক্র্যাশ হওয়া ফাইল মুছে ফেলা
                 tmpDir.listFiles()?.forEach { it.deleteRecursively() }
 
                 val realTmpPath = tmpDir.canonicalPath 
-                
-                // THE ULTIMATE FIX: Mirror Path Engine
-                // উবুন্টুর ভেতরে অ্যান্ড্রয়েডের হুবহু ফোল্ডার স্ট্রাকচার তৈরি করা হচ্ছে যাতে PRoot পথ না হারায়
                 var mirrorDir = rootfs
                 val parts = realTmpPath.split("/").filter { it.isNotEmpty() }
                 for (part in parts) {
                     mirrorDir = File(mirrorDir, part)
-                    if (!mirrorDir.exists()) {
-                        mirrorDir.mkdir()
-                    }
+                    if (!mirrorDir.exists()) mirrorDir.mkdir()
                 }
 
                 val commandList = listOf(
                     prootBinary.absolutePath, "-0", "--link2symlink",
                     "-b", "/sdcard:/sdcard", 
                     "-b", "/dev", "-b", "/proc", "-b", "/sys",
-                    "-b", "$realTmpPath:$realTmpPath", // গ্যারান্টিড বাইন্ড মাউন্ট
+                    "-b", "$realTmpPath:$realTmpPath", 
                     "-r", rootfs.absolutePath, 
                     "-w", "/root",
                     "/bin/sh", "-c", "export PATH=/bin:/usr/bin:/sbin:/usr/sbin && export HOME=/root && export TERM=xterm && export DEBIAN_FRONTEND=noninteractive && export TMPDIR=$realTmpPath && $cmd"
