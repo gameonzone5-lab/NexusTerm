@@ -63,7 +63,7 @@ class MainActivity : ComponentActivity() {
                         } else if (File(filesDir, "linux/usr/bin/apt").exists()) {
                             runLinuxCommand(command)
                         } else {
-                            tvOutput.append("[SYSTEM] Environment not ready. Please run 'setup-linux' first.\n")
+                            tvOutput.append("[SYSTEM] Environment not ready. Run 'setup-linux' first.\n")
                         }
                     }
                 }
@@ -72,89 +72,97 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun printWelcomeMessage() {
-        tvOutput.append("NexusTerm v2.0-PRO (Production Build)\n")
+        tvOutput.append("NexusTerm v4.0-STATIC (Dependency-Free Engine)\n")
         tvOutput.append("Type 'system-info' to check compatibility.\n")
-        tvOutput.append("Type 'health-check' to verify environment.\n")
-        tvOutput.append("Type 'setup-linux' to install Ubuntu Engine.\n")
+        tvOutput.append("Type 'health-check' to verify static execution.\n")
+        tvOutput.append("Type 'setup-linux' to deploy Ubuntu.\n")
     }
 
-    // ১. Smart Compatibility Layer (System Info)
     private fun printSystemInfo() {
         tvOutput.append("=== SYSTEM COMPATIBILITY LAYER ===\n")
         tvOutput.append("-> Android Version: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})\n")
+        tvOutput.append("-> Device: ${Build.MANUFACTURER} ${Build.MODEL}\n")
         tvOutput.append("-> Architecture: ${Build.SUPPORTED_ABIS.joinToString(", ")}\n")
         val storageCheck = if (Environment.isExternalStorageManager()) "GRANTED" else "DENIED (Type 'permit')"
         tvOutput.append("-> Storage Access: $storageCheck\n")
-        val proot = File(filesDir, "proot")
-        tvOutput.append("-> Engine (PRoot): ${if (proot.exists()) "INSTALLED (${proot.length()/1024} KB)" else "MISSING"}\n")
         tvOutput.append("==================================\n")
     }
 
-    // ২. Health Check System
+    private fun extractStaticEngine() {
+        val prootBinary = File(filesDir, "proot")
+        if (!prootBinary.exists() || prootBinary.length() < 500000) {
+            runOnUiThread { tvOutput.append("[*] Extracting Statically Linked Engine...\n") }
+            try {
+                assets.open("proot").use { input ->
+                    FileOutputStream(prootBinary).use { output -> input.copyTo(output) }
+                }
+                prootBinary.setExecutable(true, false)
+            } catch (e: Exception) {
+                runOnUiThread { tvOutput.append("[ERROR] Engine extraction failed: ${e.message}\n") }
+            }
+        }
+    }
+
     private fun runHealthCheck() {
         thread {
             runOnUiThread { tvOutput.append("=== RUNNING HEALTH CHECK ===\n") }
             
-            // RootFS Check
             val linuxDir = File(filesDir, "linux")
-            val aptFile = File(linuxDir, "usr/bin/apt")
-            if (aptFile.exists() && aptFile.length() > 0) {
-                runOnUiThread { tvOutput.append("[PASS] RootFS & APT verified.\n") }
-            } else {
-                runOnUiThread { tvOutput.append("[FAIL] RootFS corrupted or missing.\n") }
-            }
+            if (File(linuxDir, "usr/bin/apt").exists()) runOnUiThread { tvOutput.append("[PASS] RootFS & APT present.\n") }
+            else runOnUiThread { tvOutput.append("[FAIL] RootFS missing.\n") }
 
-            // Engine Check
             val prootBinary = File(filesDir, "proot")
-            if (prootBinary.exists() && prootBinary.canExecute()) {
-                runOnUiThread { tvOutput.append("[PASS] PRoot Engine executable.\n") }
-            } else {
-                runOnUiThread { tvOutput.append("[FAIL] PRoot Engine issue.\n") }
-            }
-
-            // DNS & Network Check (ping 8.8.8.8)
-            try {
-                val p = Runtime.getRuntime().exec("ping -c 1 8.8.8.8")
-                if (p.waitFor() == 0) {
-                    runOnUiThread { tvOutput.append("[PASS] Network reachability OK.\n") }
-                } else {
-                    runOnUiThread { tvOutput.append("[FAIL] No Internet Connection.\n") }
+            if (prootBinary.exists()) {
+                try {
+                    // Strict Execution Check (Verifying Exit Code explicitly)
+                    val pb = ProcessBuilder(prootBinary.absolutePath, "--version")
+                    pb.redirectErrorStream(true)
+                    val p = pb.start()
+                    val output = BufferedReader(InputStreamReader(p.inputStream)).readText()
+                    val exitCode = p.waitFor()
+                    
+                    if (exitCode == 0 && output.contains("PRoot")) {
+                        runOnUiThread { tvOutput.append("[PASS] Static PRoot Engine executed perfectly.\n") }
+                    } else {
+                        runOnUiThread { 
+                            tvOutput.append("[FAIL] PRoot Execution crashed (Code: $exitCode).\n") 
+                            tvOutput.append("Output: $output\n")
+                        }
+                    }
+                } catch (e: Exception) {
+                    runOnUiThread { tvOutput.append("[FAIL] Fatal Execution Error: ${e.message}\n") }
                 }
-            } catch (e: Exception) {
-                 runOnUiThread { tvOutput.append("[FAIL] Network ping failed.\n") }
+            } else {
+                runOnUiThread { tvOutput.append("[FAIL] Static PRoot binary missing.\n") }
             }
             
-            runOnUiThread { tvOutput.append("If any test failed, type 'repair-linux'.\n============================\n") }
+            runOnUiThread { tvOutput.append("============================\n") }
         }
     }
 
-    // ৩. Auto Repair
     private fun repairLinux() {
         thread {
-            runOnUiThread { tvOutput.append("[*] Initiating Auto-Repair Sequence...\n") }
+            runOnUiThread { tvOutput.append("[*] Purging system...\n") }
             try {
-                val linuxDir = File(filesDir, "linux")
-                if (linuxDir.exists()) {
-                    runOnUiThread { tvOutput.append("[*] Purging corrupted RootFS...\n") }
-                    linuxDir.deleteRecursively()
-                }
+                File(filesDir, "linux").deleteRecursively()
+                File(filesDir, "proot").delete()
                 
-                val prootBinary = File(filesDir, "proot")
-                if (prootBinary.exists()) prootBinary.delete()
+                // ক্লিনআপ: যদি আগের কোনো ডাইনামিক লাইব্রেরি থেকে থাকে
+                filesDir.listFiles()?.forEach { if (it.name.contains(".so")) it.delete() }
                 
-                runOnUiThread { tvOutput.append("[SUCCESS] Environment cleaned. Now running 'setup-linux'...\n") }
-                setupLinuxEnvironment()
+                runOnUiThread { tvOutput.append("[SUCCESS] Environment cleaned. Run 'setup-linux'.\n") }
             } catch (e: Exception) {
-                runOnUiThread { tvOutput.append("[ERROR] Repair failed: ${e.message}\n") }
+                runOnUiThread { tvOutput.append("[ERROR] Repair failed.\n") }
             }
         }
     }
 
-    // ৪. One-Command Setup
     private fun setupLinuxEnvironment() {
         thread {
             wakeLock?.acquire(20 * 60 * 1000L)
             try {
+                extractStaticEngine()
+                
                 val linuxDir = File(filesDir, "linux")
                 if (!linuxDir.exists()) linuxDir.mkdirs()
                 
@@ -164,23 +172,13 @@ class MainActivity : ComponentActivity() {
                     downloadFile("https://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-arm64.tar.gz", tarFile.absolutePath)
                 }
                 
-                val prootBinary = File(filesDir, "proot")
-                if (!prootBinary.exists()) {
-                    runOnUiThread { tvOutput.append("[*] Installing PRoot Engine...\n") }
-                    assets.open("proot").use { input ->
-                        FileOutputStream(prootBinary).use { output -> input.copyTo(output) }
-                    }
-                    prootBinary.setExecutable(true, false)
-                }
-                
                 if (!File(linuxDir, "usr/bin/apt").exists()) {
-                    runOnUiThread { tvOutput.append("[*] Extracting System Architecture...\n") }
+                    runOnUiThread { tvOutput.append("[*] Extracting Native Filesystem...\n") }
                     val p = Runtime.getRuntime().exec(arrayOf("tar", "-xf", tarFile.absolutePath, "-C", linuxDir.absolutePath))
                     p.waitFor()
                     tarFile.delete()
                 }
 
-                // Configuration
                 File(linuxDir, "etc/resolv.conf").apply {
                     parentFile.mkdirs()
                     writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
@@ -190,7 +188,7 @@ class MainActivity : ComponentActivity() {
                     writeText("APT::Sandbox::User \"root\";\n")
                 }
 
-                runOnUiThread { tvOutput.append("[SUCCESS] Setup Complete! Type 'health-check' to verify.\n") }
+                runOnUiThread { tvOutput.append("[SUCCESS] Setup Complete! Type 'health-check' to verify execution.\n") }
             } catch (e: Exception) {
                 runOnUiThread { tvOutput.append("[ERROR] Setup failed: ${e.message}\n") }
             } finally {
@@ -199,7 +197,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // ৫. Better Launcher & Exit Code Debugging
     private fun runLinuxCommand(cmd: String) {
         thread {
             wakeLock?.acquire(15 * 60 * 1000L)
@@ -208,6 +205,7 @@ class MainActivity : ComponentActivity() {
                 val rootfs = File(filesDir, "linux").absolutePath
                 val tmpDir = File(filesDir, "tmp").apply { mkdirs() }
 
+                // PURE STATIC EXECUTION SCRIPT
                 val runScript = File(filesDir, "run_cmd.sh")
                 runScript.writeText("#!/system/bin/sh\n" +
                     "export PROOT_NO_SECCOMP=1\n" +
@@ -243,17 +241,8 @@ class MainActivity : ComponentActivity() {
                 runScript.delete() 
                 
                 runOnUiThread { 
-                    if (exitCode != 0) {
-                        // Detailed Exit Code Debugging
-                        tvOutput.append("\n[SYSTEM ALERT] Ubuntu execution failed (Code $exitCode)\n")
-                        tvOutput.append("Possible Reasons:\n")
-                        tvOutput.append("- Architecture mismatch (ARM64 binary on non-ARM device)\n")
-                        tvOutput.append("- Corrupted RootFS extraction\n")
-                        tvOutput.append("- Missing symbolic links in native storage\n")
-                        tvOutput.append("\nSuggested Action: Type 'health-check' or 'repair-linux'\n")
-                    } else {
-                        tvOutput.append("\n") 
-                    }
+                    if (exitCode != 0) tvOutput.append("\n[SYSTEM ALERT] Execution failed (Code $exitCode)\nRun 'health-check' for details.\n") 
+                    else tvOutput.append("\n") 
                 }
             } catch (e: Exception) { 
                 runOnUiThread { tvOutput.append("Execution Error: ${e.message}\n") } 
@@ -270,24 +259,16 @@ class MainActivity : ComponentActivity() {
             return
         }
         var targetPath = newDir
-        if (newDir == "/sdcard" || newDir.startsWith("/sdcard/")) {
-            targetPath = newDir.replace("/sdcard", Environment.getExternalStorageDirectory().absolutePath)
-        }
+        if (newDir == "/sdcard" || newDir.startsWith("/sdcard/")) targetPath = newDir.replace("/sdcard", Environment.getExternalStorageDirectory().absolutePath)
         val targetFile = if (targetPath.startsWith("/")) File(targetPath) else File(currentDirectory, targetPath)
-        if (targetFile.exists() && targetFile.isDirectory) {
-            currentDirectory = targetFile.canonicalPath
-        } else {
-            tvOutput.append("cd: $newDir: Directory not found\n")
-        }
+        if (targetFile.exists() && targetFile.isDirectory) currentDirectory = targetFile.canonicalPath
+        else tvOutput.append("cd: $newDir: Directory not found\n")
     }
 
     private fun requestStoragePermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            try {
-                startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply { data = Uri.parse("package:$packageName") })
-            } catch (e: Exception) {
-                startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
-            }
+            try { startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply { data = Uri.parse("package:$packageName") }) } 
+            catch (e: Exception) { startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) }
         }
     }
 
@@ -305,12 +286,10 @@ class MainActivity : ComponentActivity() {
             } else { redirect = false }
         } while (redirect)
 
-        conn.inputStream.use { input -> 
-            FileOutputStream(destPath).use { output -> 
-                val data = ByteArray(4096)
-                var count: Int
-                while (input.read(data).also { count = it } != -1) { output.write(data, 0, count) }
-            } 
-        }
+        conn.inputStream.use { input -> FileOutputStream(destPath).use { output -> 
+            val data = ByteArray(4096)
+            var count: Int
+            while (input.read(data).also { count = it } != -1) { output.write(data, 0, count) }
+        }}
     }
 }
