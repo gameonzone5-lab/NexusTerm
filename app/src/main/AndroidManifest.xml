@@ -11,6 +11,7 @@
         android:allowBackup="true"
         android:label="NexusTerm"
         android:supportsRtl="true"
+        android:extractNativeLibs="true"
         android:requestLegacyExternalStorage="true"
         tools:targetApi="31">
         <activity
@@ -22,5 +23,4 @@
             </intent-filter>
         </activity>
     </application>
-
 </manifest>

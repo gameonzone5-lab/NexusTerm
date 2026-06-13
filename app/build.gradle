@@ -11,8 +11,8 @@ android {
         applicationId "com.nexus.terminal"
         minSdk 24
         targetSdk 34
-        versionCode 7
-        versionName "7.0-NativePackedEngine"
+        versionCode 9
+        versionName "9.0-CloudInjection"
     }
 
     packagingOptions {
