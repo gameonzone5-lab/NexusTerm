@@ -40,7 +40,7 @@ class MainActivity : ComponentActivity() {
         currentDirectory = filesDir.absolutePath
 
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NexusTerm::UltraEngine")
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NexusTerm::MasterEngine")
 
         printWelcomeMessage()
 
@@ -53,7 +53,6 @@ class MainActivity : ComponentActivity() {
                 when (command) {
                     "setup-linux" -> setupLinuxEnvironment()
                     "health-check" -> runHealthCheck()
-                    "check-symlinks" -> checkSymlinks()
                     "repair-linux" -> repairLinux()
                     "system-info" -> printSystemInfo()
                     "clear" -> { tvOutput.text = ""; printWelcomeMessage() }
@@ -73,9 +72,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun printWelcomeMessage() {
-        tvOutput.append("NexusTerm v8.0-ULTRA (Native Iron-Clad)\n")
-        tvOutput.append("Type 'setup-linux' to deploy Ubuntu.\n")
-        tvOutput.append("Type 'check-symlinks' to verify extraction.\n")
+        tvOutput.append("NexusTerm v9.0-MASTER (Link Interceptor)\n")
+        tvOutput.append("Type 'setup-linux' to deploy Ubuntu safely.\n")
         tvOutput.append("Type 'health-check' to verify execution.\n")
     }
 
@@ -84,13 +82,6 @@ class MainActivity : ComponentActivity() {
         tvOutput.append("-> Android: API ${Build.VERSION.SDK_INT}\n")
         tvOutput.append("-> ABI: ${Build.SUPPORTED_ABIS.joinToString(", ")}\n")
         tvOutput.append("===================\n")
-    }
-
-    private fun checkSymlinks() {
-        runOnUiThread { tvOutput.append("=== CHECKING LINUX CORE FILES ===\n") }
-        executeCommand("ls -la ${filesDir.absolutePath}/linux/bin/sh")
-        executeCommand("ls -la ${filesDir.absolutePath}/linux/usr/bin/apt")
-        runOnUiThread { tvOutput.append("=================================\n") }
     }
 
     private fun extractStaticEngine() {
@@ -113,6 +104,7 @@ class MainActivity : ComponentActivity() {
             runOnUiThread { tvOutput.append("=== RUNNING DEEP HEALTH CHECK ===\n") }
             val prootBinary = File(filesDir, "proot")
             val rootfs = File(filesDir, "linux").absolutePath
+            val tmpDir = File(filesDir, "tmp").apply { mkdirs() }
 
             if (!prootBinary.exists()) {
                 runOnUiThread { tvOutput.append("[FAIL] PRoot missing.\n") }
@@ -126,8 +118,12 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) {}
 
             try {
-                val p2 = ProcessBuilder(prootBinary.absolutePath, "-0", "-r", rootfs, "/bin/sh", "-c", "echo OK")
-                    .redirectErrorStream(true).start()
+                // Testing with --link2symlink enabled
+                val pb = ProcessBuilder(prootBinary.absolutePath, "--link2symlink", "-0", "-r", rootfs, "/bin/sh", "-c", "echo OK")
+                pb.environment()["PROOT_TMP_DIR"] = tmpDir.absolutePath
+                pb.environment()["PROOT_NO_SECCOMP"] = "1"
+                pb.redirectErrorStream(true)
+                val p2 = pb.start()
                 val out2 = BufferedReader(InputStreamReader(p2.inputStream)).readText()
                 if (p2.waitFor() == 0 && out2.contains("OK")) {
                     runOnUiThread { tvOutput.append("[PASS] Phase 2: RootFS mounted and /bin/sh is working!\n") }
@@ -137,8 +133,11 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) {}
 
             try {
-                val p3 = ProcessBuilder(prootBinary.absolutePath, "-0", "-r", rootfs, "/usr/bin/apt", "--version")
-                    .redirectErrorStream(true).start()
+                val pb = ProcessBuilder(prootBinary.absolutePath, "--link2symlink", "-0", "-r", rootfs, "/usr/bin/apt", "--version")
+                pb.environment()["PROOT_TMP_DIR"] = tmpDir.absolutePath
+                pb.environment()["PROOT_NO_SECCOMP"] = "1"
+                pb.redirectErrorStream(true)
+                val p3 = pb.start()
                 val out3 = BufferedReader(InputStreamReader(p3.inputStream)).readText()
                 if (p3.waitFor() == 0 && out3.contains("apt")) {
                     runOnUiThread { tvOutput.append("[PASS] Phase 3: APT Package Manager responds!\n") }
@@ -156,7 +155,7 @@ class MainActivity : ComponentActivity() {
             runOnUiThread { tvOutput.append("[*] Purging corrupted RootFS...\n") }
             File(filesDir, "linux").deleteRecursively()
             File(filesDir, "rootfs.tar.gz").delete()
-            File(filesDir, "busybox").delete()
+            File(filesDir, "tmp").deleteRecursively()
             runOnUiThread { tvOutput.append("[SUCCESS] Environment cleaned. Run 'setup-linux'.\n") }
         }
     }
@@ -170,9 +169,11 @@ class MainActivity : ComponentActivity() {
                 val linuxDir = File(filesDir, "linux")
                 if (!linuxDir.exists()) linuxDir.mkdirs()
                 
+                val tmpDir = File(filesDir, "tmp")
+                if (!tmpDir.exists()) tmpDir.mkdirs()
+                
                 val tarFile = File(filesDir, "rootfs.tar.gz")
                 
-                // আয়রন-ক্ল্যাড সাইজ ভেরিফিকেশন (25MB এর কম হলে ডিলিট করে নতুন করে নামাবে)
                 if (!tarFile.exists() || tarFile.length() < 25_000_000) {
                     tarFile.delete()
                     runOnUiThread { tvOutput.append("[*] Downloading Ubuntu RootFS (~28MB). Please wait...\n") }
@@ -188,13 +189,39 @@ class MainActivity : ComponentActivity() {
                 }
                 
                 if (!File(linuxDir, "usr/bin/apt").exists()) {
-                    runOnUiThread { tvOutput.append("[*] Extracting RootFS natively (Strict Mode)...\n") }
+                    runOnUiThread { tvOutput.append("[*] Faking root privileges to bypass Android hardlink blocks...\n") }
                     
-                    // অ্যান্ড্রয়েডের নেটিভ tar ব্যবহার করা হচ্ছে -xzf ফ্ল্যাগ সহ
-                    val pb = ProcessBuilder("tar", "-xzf", tarFile.absolutePath, "-C", linuxDir.absolutePath)
+                    val prootBinary = File(filesDir, "proot")
+                    
+                    // THE MASTER FIX: Wrapping 'tar' inside PRoot with '--link2symlink' to fake hardlinks
+                    val pb = ProcessBuilder(
+                        prootBinary.absolutePath, 
+                        "--link2symlink", 
+                        "-0", 
+                        "tar", 
+                        "-xf", tarFile.absolutePath, 
+                        "-C", linuxDir.absolutePath
+                    )
+                    
+                    // PROOT_TMP_DIR সেট করা বাধ্যতামূলক, নাহলে .l2s লিংক তৈরি হতে পারবে না
+                    pb.environment()["PROOT_NO_SECCOMP"] = "1"
+                    pb.environment()["PROOT_TMP_DIR"] = tmpDir.absolutePath
+                    pb.environment()["TMPDIR"] = tmpDir.absolutePath
+                    
                     pb.redirectErrorStream(true)
                     val p = pb.start()
-                    val out = BufferedReader(InputStreamReader(p.inputStream)).readText()
+                    
+                    val reader = InputStreamReader(p.inputStream)
+                    val buffer = CharArray(1024)
+                    var readCount: Int
+                    while (reader.read(buffer).also { readCount = it } != -1) {
+                        val outputChunk = String(buffer, 0, readCount)
+                        runOnUiThread { 
+                            tvOutput.append(outputChunk) 
+                            val parent = tvOutput.parent
+                            if (parent is ScrollView) parent.post { parent.fullScroll(android.view.View.FOCUS_DOWN) }
+                        }
+                    }
                     val exitCode = p.waitFor()
                     
                     if (exitCode == 0 && File(linuxDir, "bin/sh").exists()) {
@@ -203,9 +230,9 @@ class MainActivity : ComponentActivity() {
                             parentFile.mkdirs()
                             writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
                         }
-                        runOnUiThread { tvOutput.append("[SUCCESS] Setup Complete! Type 'check-symlinks'.\n") }
+                        runOnUiThread { tvOutput.append("[SUCCESS] Setup Complete! Type 'health-check'.\n") }
                     } else {
-                        runOnUiThread { tvOutput.append("[ERROR] Extraction failed (Exit Code $exitCode).\nLog: $out\n") }
+                        runOnUiThread { tvOutput.append("[ERROR] Extraction failed (Exit Code $exitCode).\n") }
                     }
                 } else {
                     runOnUiThread { tvOutput.append("[SUCCESS] Environment already set up.\n") }
@@ -233,7 +260,7 @@ class MainActivity : ComponentActivity() {
                     "export PROOT_TMP_DIR=${tmpDir.absolutePath}\n" +
                     "export TMPDIR=${tmpDir.absolutePath}\n" +
                     "unset LD_PRELOAD\n" +
-                    "${prootBinary.absolutePath} -0 -r $rootfs " +
+                    "${prootBinary.absolutePath} --link2symlink -0 -r $rootfs " +
                     "-b /dev -b /proc -b /sys -b /sdcard " +
                     "-b ${filesDir.absolutePath}:${filesDir.absolutePath} " +
                     "-w /root " +
