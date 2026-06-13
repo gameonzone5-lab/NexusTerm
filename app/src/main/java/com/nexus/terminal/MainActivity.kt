@@ -72,7 +72,7 @@ class MainActivity : ComponentActivity() {
                 permissionChecked = false
             } else {
                 if (!permissionChecked) {
-                    tvOutput.append("\n[SUCCESS] Environment Ready! Type 'setup-linux' to install pure Ubuntu.\n")
+                    tvOutput.append("\n[SUCCESS] Environment Ready! Type 'setup-linux' to install Ubuntu.\n")
                     permissionChecked = true
                 }
             }
@@ -125,7 +125,7 @@ class MainActivity : ComponentActivity() {
                 val tarFile = File(filesDir, "rootfs.tar.gz")
                 downloadFile("https://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-arm64.tar.gz", tarFile.absolutePath)
                 
-                runOnUiThread { tvOutput.append("[*] Extracting RootFS (Ignoring Android symlink errors)...\n") }
+                runOnUiThread { tvOutput.append("[*] Extracting RootFS (Using Android's native tar)...\n") }
                 val extProcess = Runtime.getRuntime().exec(arrayOf("tar", "-xf", tarFile.absolutePath, "-C", linuxDir.absolutePath))
                 extProcess.waitFor()
                 
@@ -148,23 +148,13 @@ class MainActivity : ComponentActivity() {
     private fun runLinuxCommand(cmd: String) {
         Thread {
             try {
-                // ChatGPT Method 2: code_cache bypass
-                // W^X পলিসি বাইপাস করার জন্য ফাইলটি অ্যাপের Code Cache ফোল্ডারে রাখা হচ্ছে
-                val prootBinary = File(codeCacheDir, "proot")
+                // THE ULTIMATE FIX: সরাসরি অ্যাপের সিস্টেম Native ফোল্ডার থেকে রান করা হচ্ছে
+                val nativeLibraryDir = applicationInfo.nativeLibraryDir
+                val prootBinary = File(nativeLibraryDir, "libproot.so")
                 
-                if (!prootBinary.exists() || prootBinary.length() < 500000) {
-                    runOnUiThread { tvOutput.append("[*] Downloading Engine to secure Code Cache...\n") }
-                    downloadFile("https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-aarch64-static", prootBinary.absolutePath)
-                }
-
-                // সিস্টেম লেভেল থেকে এক্সিকিউট পারমিশন নেওয়া
-                prootBinary.setExecutable(true, false)
-                try {
-                    Runtime.getRuntime().exec(arrayOf("/system/bin/chmod", "777", prootBinary.absolutePath)).waitFor()
-                } catch (e: Exception) {}
-
-                if (!prootBinary.canExecute()) {
-                    runOnUiThread { tvOutput.append("[CRITICAL] Android blocked Code Cache execution. (Error=13 Imminent)\n") }
+                if (!prootBinary.exists()) {
+                    runOnUiThread { tvOutput.append("[CRITICAL ERROR] libproot.so is completely missing from nativeLibraryDir! This is an APK build issue.\n") }
+                    return@Thread
                 }
 
                 val rootfs = File(filesDir, "linux")
@@ -173,7 +163,7 @@ class MainActivity : ComponentActivity() {
                 tmpDir.listFiles()?.forEach { it.deleteRecursively() }
                 val realTmpPath = tmpDir.canonicalPath 
 
-                // Mirror Path Fix (আগের মতোই)
+                // Mirror Path Fix
                 var mirrorDir = rootfs
                 val parts = realTmpPath.split("/").filter { it.isNotEmpty() }
                 for (part in parts) {
