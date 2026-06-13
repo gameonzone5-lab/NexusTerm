@@ -1,9 +1,11 @@
 package com.nexus.terminal
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
+import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Button
 import android.widget.EditText
@@ -24,6 +26,7 @@ class MainActivity : ComponentActivity() {
     
     private var currentDirectory: String = ""
     private var permissionChecked: Boolean = false
+    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -34,6 +37,10 @@ class MainActivity : ComponentActivity() {
         btnRun = findViewById(R.id.btnRun)
 
         currentDirectory = filesDir.absolutePath
+
+        // ব্যাকগ্রাউন্ডে সিপিইউ জাগিয়ে রাখার জন্য WakeLock ইনিশিয়ালাইজ করা
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NexusTerm::BackgroundExecution")
 
         btnRun.setOnClickListener {
             val command = etInput.text.toString().trim()
@@ -64,6 +71,14 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         if (!permissionChecked) checkPermission()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // অ্যাপ বন্ধ হলে WakeLock রিলিজ করা
+        if (wakeLock?.isHeld == true) {
+            wakeLock?.release()
+        }
     }
 
     private fun checkPermission() {
@@ -112,13 +127,14 @@ class MainActivity : ComponentActivity() {
 
     private fun setupLinuxEnvironment() {
         Thread {
+            // সেভ গার্ড: স্ক্রিন অফ হলেও এক্সট্র্যাকশন চলবে (ম্যাক্সিমাম ২০ মিনিট)
+            wakeLock?.acquire(20 * 60 * 1000L)
             try {
                 val linuxDir = File(filesDir, "linux")
                 
-                runOnUiThread { tvOutput.append("[*] Preparing Ubuntu Base...\n") }
+                runOnUiThread { tvOutput.append("[*] Preparing Ubuntu Base (Background Safe)...\n") }
                 
                 if (!File(linuxDir, "usr/bin/apt").exists()) {
-                    // ফিক্স ১: আগের নষ্ট হয়ে যাওয়া ফোল্ডার পুরোপুরি ডিলিট করা
                     linuxDir.deleteRecursively() 
                     linuxDir.mkdirs()
                     
@@ -136,15 +152,23 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     prootBinary.setExecutable(true, false)
+
+                    // ফিক্স: এক্সট্র্যাক্ট করার সময়ও Temp ফোল্ডার তৈরি ও চেনানো
+                    val tmpDir = File(filesDir, "tmp")
+                    tmpDir.mkdirs()
                     
-                    runOnUiThread { tvOutput.append("[*] Extracting RootFS Safely via PRoot (Protecting Symlinks)...\n") }
+                    runOnUiThread { tvOutput.append("[*] Extracting RootFS Safely via PRoot...\n") }
                     
-                    // ফিক্স ২: ম্যাজিক কমান্ড— PRoot-এর ভেতর দিয়ে এক্সট্র্যাক্ট করা যাতে শর্টকাট নষ্ট না হয়
                     val pb = ProcessBuilder(
                         prootBinary.absolutePath, "--link2symlink", "-0",
                         "tar", "-xf", tarFile.absolutePath, "-C", linuxDir.absolutePath
                     )
+                    
+                    // Temp ফোল্ডারের পাথ এখানে দেওয়া হলো, যাতে error না আসে
                     pb.environment()["PROOT_NO_SECCOMP"] = "1"
+                    pb.environment()["PROOT_TMP_DIR"] = tmpDir.absolutePath
+                    pb.environment()["TMPDIR"] = tmpDir.absolutePath
+                    
                     pb.redirectErrorStream(true)
                     val p = pb.start()
                     
@@ -176,16 +200,23 @@ class MainActivity : ComponentActivity() {
 
                     runOnUiThread { tvOutput.append("[SUCCESS] Termux-like Ubuntu is Ready!\nType: apt update\n") }
                 } else {
-                    runOnUiThread { tvOutput.append("[ERROR] Critical extraction failed. Check App Permissions.\n") }
+                    runOnUiThread { tvOutput.append("[ERROR] Critical extraction failed.\n") }
                 }
             } catch (e: Exception) {
                 runOnUiThread { tvOutput.append("[ERROR] Setup failed: ${e.message}\n") }
+            } finally {
+                // কাজ শেষ হলে WakeLock রিলিজ করা
+                if (wakeLock?.isHeld == true) {
+                    wakeLock?.release()
+                }
             }
         }.start()
     }
 
     private fun runLinuxCommand(cmd: String) {
         Thread {
+            // কমান্ড চালানোর সময়ও ব্যাকগ্রাউন্ড প্রসেস অন রাখা হলো
+            wakeLock?.acquire(15 * 60 * 1000L)
             try {
                 val prootBinary = File(filesDir, "proot")
                 if (!prootBinary.exists() || prootBinary.length() < 500000) {
@@ -248,9 +279,12 @@ class MainActivity : ComponentActivity() {
                         tvOutput.append("\n") 
                     }
                 }
-                
             } catch (e: Exception) { 
                 runOnUiThread { tvOutput.append("Linux Error: ${e.message}\n") } 
+            } finally {
+                if (wakeLock?.isHeld == true) {
+                    wakeLock?.release()
+                }
             }
         }.start()
     }
