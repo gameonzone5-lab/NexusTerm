@@ -148,18 +148,23 @@ class MainActivity : ComponentActivity() {
     private fun runLinuxCommand(cmd: String) {
         Thread {
             try {
-                // THE ULTIMATE BYPASS: UserLAnd Loader Injection
-                val nativeLibraryDir = applicationInfo.nativeLibraryDir
-                val prootBinary = File(nativeLibraryDir, "libproot.so")
+                // ChatGPT Method 2: code_cache bypass
+                // W^X পলিসি বাইপাস করার জন্য ফাইলটি অ্যাপের Code Cache ফোল্ডারে রাখা হচ্ছে
+                val prootBinary = File(codeCacheDir, "proot")
                 
-                // UserLAnd এর loader ফাইলটি ডায়নামিক ভাবে খোঁজা
-                var loaderBinary = File(nativeLibraryDir, "libproot-loader.so")
-                if (!loaderBinary.exists()) loaderBinary = File(nativeLibraryDir, "libloader.so")
-                if (!loaderBinary.exists()) loaderBinary = File(nativeLibraryDir, "libproot-loader64.so")
+                if (!prootBinary.exists() || prootBinary.length() < 500000) {
+                    runOnUiThread { tvOutput.append("[*] Downloading Engine to secure Code Cache...\n") }
+                    downloadFile("https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-aarch64-static", prootBinary.absolutePath)
+                }
 
-                if (!prootBinary.exists() || !loaderBinary.exists()) {
-                    runOnUiThread { tvOutput.append("[CRITICAL] UserLAnd Execution Emulator missing! Reinstall APK.\n") }
-                    return@Thread
+                // সিস্টেম লেভেল থেকে এক্সিকিউট পারমিশন নেওয়া
+                prootBinary.setExecutable(true, false)
+                try {
+                    Runtime.getRuntime().exec(arrayOf("/system/bin/chmod", "777", prootBinary.absolutePath)).waitFor()
+                } catch (e: Exception) {}
+
+                if (!prootBinary.canExecute()) {
+                    runOnUiThread { tvOutput.append("[CRITICAL] Android blocked Code Cache execution. (Error=13 Imminent)\n") }
                 }
 
                 val rootfs = File(filesDir, "linux")
@@ -168,6 +173,7 @@ class MainActivity : ComponentActivity() {
                 tmpDir.listFiles()?.forEach { it.deleteRecursively() }
                 val realTmpPath = tmpDir.canonicalPath 
 
+                // Mirror Path Fix (আগের মতোই)
                 var mirrorDir = rootfs
                 val parts = realTmpPath.split("/").filter { it.isNotEmpty() }
                 for (part in parts) {
@@ -188,11 +194,6 @@ class MainActivity : ComponentActivity() {
                 val pb = ProcessBuilder(commandList)
                 pb.environment().remove("LD_PRELOAD")
                 pb.environment()["PROOT_TMP_DIR"] = realTmpPath
-                
-                // কার্নেল ব্লক বাইপাস করার জন্য ম্যাজিক ভেরিয়েবল সেট করা
-                pb.environment()["PROOT_LOADER"] = loaderBinary.absolutePath
-                pb.environment()["PROOT_LOADER_64"] = loaderBinary.absolutePath
-                pb.environment()["PROOT_NO_SECCOMP"] = "1"
                 
                 pb.redirectErrorStream(true)
                 val p = pb.start()
