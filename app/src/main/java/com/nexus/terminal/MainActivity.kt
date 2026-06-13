@@ -116,15 +116,52 @@ class MainActivity : ComponentActivity() {
                 val linuxDir = File(filesDir, "linux")
                 
                 runOnUiThread { tvOutput.append("[*] Preparing Ubuntu Base...\n") }
-                if (!linuxDir.exists()) linuxDir.mkdirs()
-
+                
                 if (!File(linuxDir, "usr/bin/apt").exists()) {
-                    val tarFile = File(filesDir, "rootfs.tar.gz")
-                    downloadFile("https://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-arm64.tar.gz", tarFile.absolutePath)
+                    // ফিক্স ১: আগের নষ্ট হয়ে যাওয়া ফোল্ডার পুরোপুরি ডিলিট করা
+                    linuxDir.deleteRecursively() 
+                    linuxDir.mkdirs()
                     
-                    runOnUiThread { tvOutput.append("[*] Extracting RootFS (This takes a moment)...\n") }
-                    val extProcess = Runtime.getRuntime().exec(arrayOf("tar", "-xf", tarFile.absolutePath, "-C", linuxDir.absolutePath))
-                    extProcess.waitFor()
+                    val tarFile = File(filesDir, "rootfs.tar.gz")
+                    if (!tarFile.exists()) {
+                        downloadFile("https://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-arm64.tar.gz", tarFile.absolutePath)
+                    }
+                    
+                    val prootBinary = File(filesDir, "proot")
+                    if (!prootBinary.exists() || prootBinary.length() < 500000) {
+                        assets.open("proot").use { input ->
+                            FileOutputStream(prootBinary).use { output ->
+                                input.copyTo(output)
+                            }
+                        }
+                    }
+                    prootBinary.setExecutable(true, false)
+                    
+                    runOnUiThread { tvOutput.append("[*] Extracting RootFS Safely via PRoot (Protecting Symlinks)...\n") }
+                    
+                    // ফিক্স ২: ম্যাজিক কমান্ড— PRoot-এর ভেতর দিয়ে এক্সট্র্যাক্ট করা যাতে শর্টকাট নষ্ট না হয়
+                    val pb = ProcessBuilder(
+                        prootBinary.absolutePath, "--link2symlink", "-0",
+                        "tar", "-xf", tarFile.absolutePath, "-C", linuxDir.absolutePath
+                    )
+                    pb.environment()["PROOT_NO_SECCOMP"] = "1"
+                    pb.redirectErrorStream(true)
+                    val p = pb.start()
+                    
+                    val reader = InputStreamReader(p.inputStream)
+                    val buffer = CharArray(1024)
+                    var readCount: Int
+                    while (reader.read(buffer).also { readCount = it } != -1) {
+                        val outputChunk = String(buffer, 0, readCount)
+                        runOnUiThread { 
+                            tvOutput.append(outputChunk) 
+                            val parent = tvOutput.parent
+                            if (parent is ScrollView) {
+                                parent.post { parent.fullScroll(android.view.View.FOCUS_DOWN) }
+                            }
+                        }
+                    }
+                    p.waitFor()
                     tarFile.delete()
                 }
 
@@ -139,7 +176,7 @@ class MainActivity : ComponentActivity() {
 
                     runOnUiThread { tvOutput.append("[SUCCESS] Termux-like Ubuntu is Ready!\nType: apt update\n") }
                 } else {
-                    runOnUiThread { tvOutput.append("[ERROR] Critical extraction failed. Try clearing app data.\n") }
+                    runOnUiThread { tvOutput.append("[ERROR] Critical extraction failed. Check App Permissions.\n") }
                 }
             } catch (e: Exception) {
                 runOnUiThread { tvOutput.append("[ERROR] Setup failed: ${e.message}\n") }
@@ -184,8 +221,6 @@ class MainActivity : ComponentActivity() {
                 env["TERM"] = "xterm"
                 env["PROOT_TMP_DIR"] = tmpDir.absolutePath
                 env["TMPDIR"] = tmpDir.absolutePath
-                
-                // জাদুকরী সমাধান: Android Kernel কে বাধ্য করা যেন সে PRoot কে ব্লক না করে
                 env["PROOT_NO_SECCOMP"] = "1" 
                 
                 pb.redirectErrorStream(true)
@@ -205,7 +240,6 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 
-                // প্রসেস যদি ক্র্যাশ করে তবে কেন ক্র্যাশ করল তার কোড প্রিন্ট করবে
                 val exitCode = p.waitFor()
                 runOnUiThread { 
                     if (exitCode != 0) {
