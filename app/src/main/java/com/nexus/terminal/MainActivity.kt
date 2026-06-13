@@ -40,7 +40,7 @@ class MainActivity : ComponentActivity() {
         currentDirectory = filesDir.absolutePath
 
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NexusTerm::BusyBoxEngine")
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NexusTerm::UltraEngine")
 
         printWelcomeMessage()
 
@@ -61,7 +61,7 @@ class MainActivity : ComponentActivity() {
                     else -> {
                         if (command.startsWith("cd ")) {
                             handleCdCommand(command)
-                        } else if (File(filesDir, "linux").exists()) {
+                        } else if (File(filesDir, "linux/bin/sh").exists()) {
                             runLinuxCommand(command)
                         } else {
                             tvOutput.append("[SYSTEM] RootFS missing. Run 'setup-linux' first.\n")
@@ -73,10 +73,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun printWelcomeMessage() {
-        tvOutput.append("NexusTerm v6.2-BUSYBOX (Symlink Protected)\n")
-        tvOutput.append("Type 'setup-linux' to extract Ubuntu safely.\n")
-        tvOutput.append("Type 'check-symlinks' to verify Android tar didn't break files.\n")
-        tvOutput.append("Type 'health-check' to verify RootFS execution.\n")
+        tvOutput.append("NexusTerm v8.0-ULTRA (Native Iron-Clad)\n")
+        tvOutput.append("Type 'setup-linux' to deploy Ubuntu.\n")
+        tvOutput.append("Type 'check-symlinks' to verify extraction.\n")
+        tvOutput.append("Type 'health-check' to verify execution.\n")
     }
 
     private fun printSystemInfo() {
@@ -87,10 +87,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun checkSymlinks() {
-        runOnUiThread { tvOutput.append("=== CHECKING LINUX SYMLINKS ===\n") }
+        runOnUiThread { tvOutput.append("=== CHECKING LINUX CORE FILES ===\n") }
         executeCommand("ls -la ${filesDir.absolutePath}/linux/bin/sh")
         executeCommand("ls -la ${filesDir.absolutePath}/linux/usr/bin/apt")
-        runOnUiThread { tvOutput.append("===============================\n") }
+        runOnUiThread { tvOutput.append("=================================\n") }
     }
 
     private fun extractStaticEngine() {
@@ -111,10 +111,8 @@ class MainActivity : ComponentActivity() {
     private fun runHealthCheck() {
         thread {
             runOnUiThread { tvOutput.append("=== RUNNING DEEP HEALTH CHECK ===\n") }
-            
             val prootBinary = File(filesDir, "proot")
             val rootfs = File(filesDir, "linux").absolutePath
-            val tmpDir = File(filesDir, "tmp").apply { mkdirs() }
 
             if (!prootBinary.exists()) {
                 runOnUiThread { tvOutput.append("[FAIL] PRoot missing.\n") }
@@ -157,8 +155,8 @@ class MainActivity : ComponentActivity() {
         thread {
             runOnUiThread { tvOutput.append("[*] Purging corrupted RootFS...\n") }
             File(filesDir, "linux").deleteRecursively()
-            File(filesDir, "busybox").delete()
             File(filesDir, "rootfs.tar.gz").delete()
+            File(filesDir, "busybox").delete()
             runOnUiThread { tvOutput.append("[SUCCESS] Environment cleaned. Run 'setup-linux'.\n") }
         }
     }
@@ -173,36 +171,46 @@ class MainActivity : ComponentActivity() {
                 if (!linuxDir.exists()) linuxDir.mkdirs()
                 
                 val tarFile = File(filesDir, "rootfs.tar.gz")
-                if (!tarFile.exists() || tarFile.length() < 1000000) {
-                    runOnUiThread { tvOutput.append("[*] Downloading Ubuntu RootFS...\n") }
+                
+                // আয়রন-ক্ল্যাড সাইজ ভেরিফিকেশন (25MB এর কম হলে ডিলিট করে নতুন করে নামাবে)
+                if (!tarFile.exists() || tarFile.length() < 25_000_000) {
+                    tarFile.delete()
+                    runOnUiThread { tvOutput.append("[*] Downloading Ubuntu RootFS (~28MB). Please wait...\n") }
                     downloadFile("https://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-arm64.tar.gz", tarFile.absolutePath)
                 }
 
-                val busybox = File(filesDir, "busybox")
-                if (!busybox.exists() || busybox.length() < 500000) {
-                    runOnUiThread { tvOutput.append("[*] Downloading Linux BusyBox for safe extraction...\n") }
-                    // 🚨 ভুল URL ফিক্স করা হয়েছে:
-                    downloadFile("https://busybox.net/downloads/binaries/1.31.0-defconfig-multiarch-musl/busybox-armv8l", busybox.absolutePath)
-                    busybox.setExecutable(true, false)
+                val rootFsSizeKB = tarFile.length() / 1024
+                runOnUiThread { tvOutput.append("[*] Verification: RootFS Downloaded = ${rootFsSizeKB}KB\n") }
+                
+                if (rootFsSizeKB < 25000) {
+                    runOnUiThread { tvOutput.append("[ERROR] Network Interrupted! File is corrupted. Type 'repair-linux' and try again.\n") }
+                    return@thread
                 }
                 
-                if (!File(linuxDir, "usr/bin/apt").exists() && busybox.exists()) {
-                    runOnUiThread { tvOutput.append("[*] Extracting RootFS using BusyBox (Protecting Symlinks)...\n") }
-                    val pb = ProcessBuilder(busybox.absolutePath, "tar", "-xf", tarFile.absolutePath, "-C", linuxDir.absolutePath)
+                if (!File(linuxDir, "usr/bin/apt").exists()) {
+                    runOnUiThread { tvOutput.append("[*] Extracting RootFS natively (Strict Mode)...\n") }
+                    
+                    // অ্যান্ড্রয়েডের নেটিভ tar ব্যবহার করা হচ্ছে -xzf ফ্ল্যাগ সহ
+                    val pb = ProcessBuilder("tar", "-xzf", tarFile.absolutePath, "-C", linuxDir.absolutePath)
                     pb.redirectErrorStream(true)
                     val p = pb.start()
                     val out = BufferedReader(InputStreamReader(p.inputStream)).readText()
-                    p.waitFor()
-                    if (out.isNotEmpty()) runOnUiThread { tvOutput.append("[BusyBox Log] $out\n") }
-                    tarFile.delete()
+                    val exitCode = p.waitFor()
+                    
+                    if (exitCode == 0 && File(linuxDir, "bin/sh").exists()) {
+                        tarFile.delete()
+                        File(linuxDir, "etc/resolv.conf").apply {
+                            parentFile.mkdirs()
+                            writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
+                        }
+                        runOnUiThread { tvOutput.append("[SUCCESS] Setup Complete! Type 'check-symlinks'.\n") }
+                    } else {
+                        runOnUiThread { tvOutput.append("[ERROR] Extraction failed (Exit Code $exitCode).\nLog: $out\n") }
+                    }
+                } else {
+                    runOnUiThread { tvOutput.append("[SUCCESS] Environment already set up.\n") }
                 }
 
-                File(linuxDir, "etc/resolv.conf").apply {
-                    parentFile.mkdirs()
-                    writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
-                }
-
-                runOnUiThread { tvOutput.append("[SUCCESS] Setup Complete! Type 'check-symlinks' then 'health-check'.\n") }
             } catch (e: Exception) {
                 runOnUiThread { tvOutput.append("[ERROR] Setup failed: ${e.message}\n") }
             } finally {
@@ -306,20 +314,31 @@ class MainActivity : ComponentActivity() {
         var url = URL(urlString)
         var conn: HttpURLConnection
         var redirect: Boolean
+        var redirectCount = 0
         do {
             conn = url.openConnection() as HttpURLConnection
             conn.setRequestProperty("User-Agent", "Mozilla/5.0")
+            conn.connectTimeout = 15000
+            conn.readTimeout = 60000
             conn.instanceFollowRedirects = false
-            if (conn.responseCode in listOf(301, 302, 303)) {
+            val status = conn.responseCode
+            if (status in listOf(HttpURLConnection.HTTP_MOVED_TEMP, HttpURLConnection.HTTP_MOVED_PERM, HttpURLConnection.HTTP_SEE_OTHER, 307, 308)) {
                 redirect = true
                 url = URL(conn.getHeaderField("Location"))
-            } else { redirect = false }
-        } while (redirect)
+                redirectCount++
+            } else { 
+                redirect = false 
+            }
+        } while (redirect && redirectCount < 5)
 
-        conn.inputStream.use { input -> FileOutputStream(destPath).use { output -> 
-            val data = ByteArray(4096)
-            var count: Int
-            while (input.read(data).also { count = it } != -1) { output.write(data, 0, count) }
-        }}
+        if (conn.responseCode in 200..299) {
+            conn.inputStream.use { input -> FileOutputStream(destPath).use { output -> 
+                val data = ByteArray(8192)
+                var count: Int
+                while (input.read(data).also { count = it } != -1) { output.write(data, 0, count) }
+            }}
+        } else {
+            throw Exception("HTTP Error ${conn.responseCode}: ${conn.responseMessage}")
+        }
     }
 }
