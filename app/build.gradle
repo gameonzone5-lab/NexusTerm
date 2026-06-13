@@ -30,6 +30,7 @@ dependencies {
     implementation 'androidx.core:core-ktx:1.12.0'
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.11.0'
-    // Hermes Agent-এর বলা নতুন লাইব্রেরি
     implementation 'org.apache.commons:commons-compress:1.26.0'
+    // Hermes-এর দেওয়া নতুন ডাউনলোডার লাইব্রেরি (OkHttp)
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
 }
