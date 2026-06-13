@@ -40,7 +40,7 @@ class MainActivity : ComponentActivity() {
         currentDirectory = filesDir.absolutePath
 
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NexusTerm::MasterEngine")
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NexusTerm::GodModeEngine")
 
         printWelcomeMessage()
 
@@ -53,6 +53,7 @@ class MainActivity : ComponentActivity() {
                 when (command) {
                     "setup-linux" -> setupLinuxEnvironment()
                     "health-check" -> runHealthCheck()
+                    "check-symlinks" -> checkSymlinks()
                     "repair-linux" -> repairLinux()
                     "system-info" -> printSystemInfo()
                     "clear" -> { tvOutput.text = ""; printWelcomeMessage() }
@@ -72,7 +73,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun printWelcomeMessage() {
-        tvOutput.append("NexusTerm v9.0-MASTER (Link Interceptor)\n")
+        tvOutput.append("NexusTerm v10.0-GOD-MODE (Pure Static Isolation)\n")
         tvOutput.append("Type 'setup-linux' to deploy Ubuntu safely.\n")
         tvOutput.append("Type 'health-check' to verify execution.\n")
     }
@@ -82,6 +83,13 @@ class MainActivity : ComponentActivity() {
         tvOutput.append("-> Android: API ${Build.VERSION.SDK_INT}\n")
         tvOutput.append("-> ABI: ${Build.SUPPORTED_ABIS.joinToString(", ")}\n")
         tvOutput.append("===================\n")
+    }
+
+    private fun checkSymlinks() {
+        runOnUiThread { tvOutput.append("=== CHECKING LINUX CORE FILES ===\n") }
+        executeCommand("ls -la ${filesDir.absolutePath}/linux/bin/sh")
+        executeCommand("ls -la ${filesDir.absolutePath}/linux/usr/bin/apt")
+        runOnUiThread { tvOutput.append("=================================\n") }
     }
 
     private fun extractStaticEngine() {
@@ -118,7 +126,6 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) {}
 
             try {
-                // Testing with --link2symlink enabled
                 val pb = ProcessBuilder(prootBinary.absolutePath, "--link2symlink", "-0", "-r", rootfs, "/bin/sh", "-c", "echo OK")
                 pb.environment()["PROOT_TMP_DIR"] = tmpDir.absolutePath
                 pb.environment()["PROOT_NO_SECCOMP"] = "1"
@@ -156,6 +163,7 @@ class MainActivity : ComponentActivity() {
             File(filesDir, "linux").deleteRecursively()
             File(filesDir, "rootfs.tar.gz").delete()
             File(filesDir, "tmp").deleteRecursively()
+            File(filesDir, "busybox").delete()
             runOnUiThread { tvOutput.append("[SUCCESS] Environment cleaned. Run 'setup-linux'.\n") }
         }
     }
@@ -173,15 +181,23 @@ class MainActivity : ComponentActivity() {
                 if (!tmpDir.exists()) tmpDir.mkdirs()
                 
                 val tarFile = File(filesDir, "rootfs.tar.gz")
-                
                 if (!tarFile.exists() || tarFile.length() < 25_000_000) {
                     tarFile.delete()
                     runOnUiThread { tvOutput.append("[*] Downloading Ubuntu RootFS (~28MB). Please wait...\n") }
                     downloadFile("https://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-arm64.tar.gz", tarFile.absolutePath)
                 }
 
+                // THE MASTER FIX: Downloading Official Static BusyBox
+                val busybox = File(filesDir, "busybox")
+                if (!busybox.exists() || busybox.length() < 500_000) {
+                    busybox.delete()
+                    runOnUiThread { tvOutput.append("[*] Downloading Static BusyBox Engine...\n") }
+                    downloadFile("https://busybox.net/downloads/binaries/1.31.0-defconfig-multiarch-musl/busybox-armv8l", busybox.absolutePath)
+                    busybox.setExecutable(true, false)
+                }
+
                 val rootFsSizeKB = tarFile.length() / 1024
-                runOnUiThread { tvOutput.append("[*] Verification: RootFS Downloaded = ${rootFsSizeKB}KB\n") }
+                runOnUiThread { tvOutput.append("[*] Verification: RootFS=${rootFsSizeKB}KB, Engine=${busybox.length()/1024}KB\n") }
                 
                 if (rootFsSizeKB < 25000) {
                     runOnUiThread { tvOutput.append("[ERROR] Network Interrupted! File is corrupted. Type 'repair-linux' and try again.\n") }
@@ -189,21 +205,21 @@ class MainActivity : ComponentActivity() {
                 }
                 
                 if (!File(linuxDir, "usr/bin/apt").exists()) {
-                    runOnUiThread { tvOutput.append("[*] Faking root privileges to bypass Android hardlink blocks...\n") }
+                    runOnUiThread { tvOutput.append("[*] Faking root privileges with Pure Static Isolation...\n") }
                     
                     val prootBinary = File(filesDir, "proot")
                     
-                    // THE MASTER FIX: Wrapping 'tar' inside PRoot with '--link2symlink' to fake hardlinks
+                    // The Ultimate Command: Static PRoot runs Static BusyBox tar with Link interception
                     val pb = ProcessBuilder(
                         prootBinary.absolutePath, 
                         "--link2symlink", 
                         "-0", 
+                        busybox.absolutePath, // <-- Static BusyBox (No dynamic linker crashes)
                         "tar", 
-                        "-xf", tarFile.absolutePath, 
+                        "-xzf", tarFile.absolutePath, 
                         "-C", linuxDir.absolutePath
                     )
                     
-                    // PROOT_TMP_DIR সেট করা বাধ্যতামূলক, নাহলে .l2s লিংক তৈরি হতে পারবে না
                     pb.environment()["PROOT_NO_SECCOMP"] = "1"
                     pb.environment()["PROOT_TMP_DIR"] = tmpDir.absolutePath
                     pb.environment()["TMPDIR"] = tmpDir.absolutePath
