@@ -34,8 +34,6 @@ class MainActivity : ComponentActivity() {
 
         currentDirectory = filesDir.absolutePath
 
-        logNativeLibraryDirectory()
-        
         btnRun.setOnClickListener {
             val command = etInput.text.toString().trim()
             if (command.isNotEmpty()) {
@@ -47,26 +45,19 @@ class MainActivity : ComponentActivity() {
                 when {
                     command == "setup-linux" -> setupLinuxEnvironment()
                     command == "permit" -> requestStoragePermission()
-                    command == "clear" -> { tvOutput.text = ""; logNativeLibraryDirectory(); checkPermission() }
+                    command == "clear" -> { tvOutput.text = ""; checkPermission() }
                     command.startsWith("cd ") -> handleCdCommand(command)
                     isLinuxReady -> runLinuxCommand(command)
-                    else -> executeCommand(command)
+                    else -> {
+                        if (command.startsWith("apt ") || command.startsWith("linux ")) {
+                            tvOutput.append("[ERROR] Ubuntu Base is missing. Run 'setup-linux' first.\n")
+                        } else {
+                            executeCommand(command)
+                        }
+                    }
                 }
             }
         }
-    }
-
-    private fun logNativeLibraryDirectory() {
-        tvOutput.append("=== SYSTEM NATIVE LOG ===\n")
-        tvOutput.append("NativeDir: ${applicationInfo.nativeLibraryDir}\n")
-        val nativeDirFile = File(applicationInfo.nativeLibraryDir)
-        val files = nativeDirFile.listFiles()
-        if (files.isNullOrEmpty()) {
-            tvOutput.append("[CRITICAL] nativeLibraryDir is COMPLETELY EMPTY!\n")
-        } else {
-            files.forEach { tvOutput.append(" -> Found: ${it.name} (${it.length()} bytes)\n") }
-        }
-        tvOutput.append("=========================\n")
     }
 
     override fun onResume() {
@@ -77,11 +68,11 @@ class MainActivity : ComponentActivity() {
     private fun checkPermission() {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
             if (!Environment.isExternalStorageManager()) {
-                tvOutput.append("\n[WARNING] Storage Permission Required! Type 'permit' and RUN.\n")
+                tvOutput.append("\n[WARNING] Storage Permission Required! Type 'permit' and press RUN.\n")
                 permissionChecked = false
             } else {
                 if (!permissionChecked) {
-                    tvOutput.append("\n[READY] Type 'setup-linux' if not installed.\n")
+                    tvOutput.append("\n[READY] Type 'setup-linux' to install pure Ubuntu.\n")
                     permissionChecked = true
                 }
             }
@@ -123,16 +114,17 @@ class MainActivity : ComponentActivity() {
             try {
                 val linuxDir = File(filesDir, "linux")
                 if (File(linuxDir, "usr/bin/apt").exists()) {
-                    runOnUiThread { tvOutput.append("[SUCCESS] Ubuntu is installed!\n") }
+                    runOnUiThread { tvOutput.append("[SUCCESS] Ubuntu is already installed!\n") }
                     return@Thread
                 }
-                runOnUiThread { tvOutput.append("[*] Downloading Ubuntu Base...\n") }
+
+                runOnUiThread { tvOutput.append("[*] Downloading Official Ubuntu Base...\n") }
                 if (!linuxDir.exists()) linuxDir.mkdirs()
 
                 val tarFile = File(filesDir, "rootfs.tar.gz")
                 downloadFile("https://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-arm64.tar.gz", tarFile.absolutePath)
                 
-                runOnUiThread { tvOutput.append("[*] Extracting RootFS...\n") }
+                runOnUiThread { tvOutput.append("[*] Extracting RootFS (Ignoring Android symlink errors)...\n") }
                 val extProcess = Runtime.getRuntime().exec(arrayOf("tar", "-xf", tarFile.absolutePath, "-C", linuxDir.absolutePath))
                 extProcess.waitFor()
                 
@@ -141,12 +133,12 @@ class MainActivity : ComponentActivity() {
                     val resolvConf = File(linuxDir, "etc/resolv.conf")
                     resolvConf.parentFile.mkdirs()
                     resolvConf.writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
-                    runOnUiThread { tvOutput.append("[SUCCESS] Ubuntu Ready! Run your command.\n") }
+                    runOnUiThread { tvOutput.append("[SUCCESS] Termux-like Ubuntu is Ready!\nType: apt update\n") }
                 } else {
-                    runOnUiThread { tvOutput.append("[ERROR] Extraction failed.\n") }
+                    runOnUiThread { tvOutput.append("[ERROR] Critical extraction failed.\n") }
                 }
             } catch (e: Exception) {
-                runOnUiThread { tvOutput.append("[ERROR] ${e.message}\n") }
+                runOnUiThread { tvOutput.append("[ERROR] Setup failed: ${e.message}\n") }
             }
         }.start()
     }
@@ -154,40 +146,40 @@ class MainActivity : ComponentActivity() {
     private fun runLinuxCommand(cmd: String) {
         Thread {
             try {
-                val nativeLibraryDir = applicationInfo.nativeLibraryDir
-                val prootBinary = File(nativeLibraryDir, "libproot.so")
-                val loader64 = File(nativeLibraryDir, "libproot-loader64.so")
-                val loader32 = File(nativeLibraryDir, "libproot-loader.so")
-                
-                if (!prootBinary.exists()) {
-                    runOnUiThread { tvOutput.append("[ERROR] libproot.so missing from system native dir!\n") }
-                    return@Thread
+                // সরাসরি নিজস্ব ফোল্ডার থেকে PRoot রান করা (Target SDK 28 এর কারণে কোনো W^X ব্লক হবে না)
+                val prootBinary = File(filesDir, "proot")
+                if (!prootBinary.exists() || prootBinary.length() < 500000) {
+                     runOnUiThread { tvOutput.append("[*] Downloading Standalone Execution Engine...\n") }
+                     downloadFile("https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-aarch64-static", prootBinary.absolutePath)
                 }
+                prootBinary.setExecutable(true, false)
 
-                val rootfs = File(filesDir, "linux")
+                val rootfs = File(filesDir, "linux").absolutePath
                 val tmpDir = File(filesDir, "tmp")
                 tmpDir.mkdirs()
-                val realTmpPath = tmpDir.canonicalPath 
+                
+                // সবচেয়ে জরুরি ফিক্স: PRoot যাতে তার Temp ফাইলগুলোর পথ না হারায়
                 val appDataDir = filesDir.parentFile?.absolutePath ?: "/data/user/0/$packageName"
 
                 val commandList = listOf(
-                    prootBinary.absolutePath, "-0", "--link2symlink",
-                    "-b", "/sdcard:/sdcard", "-b", "/dev", "-b", "/proc", "-b", "/sys",
-                    "-b", "$appDataDir:$appDataDir", 
-                    "-r", rootfs.absolutePath, "-w", "/root",
-                    "/bin/sh", "-c", "export PATH=/bin:/usr/bin:/sbin:/usr/sbin && export HOME=/root && export TERM=xterm && export DEBIAN_FRONTEND=noninteractive && export TMPDIR=$realTmpPath && $cmd"
+                    prootBinary.absolutePath, "--link2symlink", "-0",
+                    "-r", rootfs, 
+                    "-b", "/dev", "-b", "/proc", "-b", "/sys", "-b", "/sdcard",
+                    "-b", "$appDataDir:$appDataDir", // Bind app directory
+                    "-w", "/root",
+                    "/usr/bin/env", "-i",
+                    "HOME=/root",
+                    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                    "TERM=xterm",
+                    "PROOT_TMP_DIR=${tmpDir.absolutePath}",
+                    "TMPDIR=${tmpDir.absolutePath}",
+                    "/bin/sh", "-c", cmd
                 )
                 
                 val pb = ProcessBuilder(commandList)
-                pb.environment().remove("LD_PRELOAD")
-                pb.environment()["PROOT_TMP_DIR"] = realTmpPath
-                
-                if (loader64.exists()) pb.environment()["PROOT_LOADER_64"] = loader64.absolutePath
-                if (loader32.exists()) pb.environment()["PROOT_LOADER"] = loader32.absolutePath
-                pb.environment()["PROOT_NO_SECCOMP"] = "1"
-                
                 pb.redirectErrorStream(true)
                 val p = pb.start()
+                
                 p.inputStream.bufferedReader().useLines { lines -> 
                     lines.forEach { runOnUiThread { tvOutput.append("$it\n") } } 
                 }
@@ -201,22 +193,28 @@ class MainActivity : ComponentActivity() {
         var url = URL(urlString)
         var conn: HttpURLConnection
         var redirect: Boolean
+        
         do {
             conn = url.openConnection() as HttpURLConnection
             conn.setRequestProperty("User-Agent", "Mozilla/5.0")
             conn.instanceFollowRedirects = false
             val status = conn.responseCode
+            
             if (status in listOf(HttpURLConnection.HTTP_MOVED_TEMP, HttpURLConnection.HTTP_MOVED_PERM, HttpURLConnection.HTTP_SEE_OTHER)) {
                 redirect = true
                 url = URL(conn.getHeaderField("Location"))
-            } else { redirect = false }
+            } else {
+                redirect = false
+            }
         } while (redirect)
 
         conn.inputStream.use { input -> 
             FileOutputStream(destPath).use { output -> 
                 val data = ByteArray(4096)
                 var count: Int
-                while (input.read(data).also { count = it } != -1) { output.write(data, 0, count) }
+                while (input.read(data).also { count = it } != -1) {
+                    output.write(data, 0, count)
+                }
             } 
         }
     }
@@ -234,9 +232,8 @@ class MainActivity : ComponentActivity() {
                 while (errorReader.readLine().also { line = it } != null) output.append(line).append("\n")
                 process.waitFor()
                 runOnUiThread { if (output.isNotEmpty()) tvOutput.append(output.toString()) }
-            } catch (e: Exception) { 
-                // এখানেই it.message এর জায়গায় e.message করে ফিক্স করা হয়েছে!
-                runOnUiThread { tvOutput.append("Error: ${e.message}\n") } 
+            } catch (e: Exception) {
+                runOnUiThread { tvOutput.append("Error: ${e.message}\n") }
             }
         }.start()
     }
