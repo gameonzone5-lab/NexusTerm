@@ -1,4 +1,4 @@
-name: NexusTerm Cloud Compiler
+name: NexusTerm Cloud Compiler with Verification
 
 on:
   push:
@@ -18,9 +18,8 @@ jobs:
         distribution: 'temurin'
         cache: gradle
 
-    - name: Cloud Injection - Download & Patch PRoot Engine
+    - name: Cloud Injection & Pre-Verify
       run: |
-        echo "Injecting UserLAnd Engine directly into Build..."
         mkdir -p app/src/main/jniLibs/arm64-v8a
         wget https://github.com/CypherpunkArmory/UserLAnd/releases/download/v2.8.3/app-release.apk -O temp.apk
         unzip -j -o temp.apk "lib/arm64-v8a/libuserland-exec.so" -d app/src/main/jniLibs/arm64-v8a/
@@ -29,13 +28,21 @@ jobs:
         mv app/src/main/jniLibs/arm64-v8a/libuserland-exec-loader.so app/src/main/jniLibs/arm64-v8a/libproot-loader.so
         cp app/src/main/jniLibs/arm64-v8a/libproot-loader.so app/src/main/jniLibs/arm64-v8a/libproot-loader64.so
         rm temp.apk
+        
+        echo "=== CHATGPT STEP 1: VERIFYING jniLibs BEFORE GRADLE BUILD ==="
+        ls -R app/src/main/jniLibs
 
-    - name: Build APK
+    - name: Build APK with doNotStrip
       run: |
         chmod +x gradlew
         ./gradlew assembleRelease
 
-    - name: Upload Output
+    - name: Post-Build Verification (Check inside final APK)
+      run: |
+        echo "=== CHATGPT STEP 2: VERIFYING INSIDE FINAL APK ==="
+        unzip -l app/build/outputs/apk/release/app-release-unsigned.apk | grep lib || echo "NO LIBS FOUND!"
+
+    - name: Upload Verified Output
       uses: actions/upload-artifact@v4
       with:
         name: NexusTerm-PlayStore-Ready

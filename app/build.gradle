@@ -11,14 +11,18 @@ android {
         applicationId "com.nexus.terminal"
         minSdk 24
         targetSdk 34
-        versionCode 9
-        versionName "9.0-CloudInjection"
+        versionCode 10
+        versionName "10.0-VerifiedEngine"
     }
 
     packagingOptions {
         jniLibs {
             useLegacyPackaging true
         }
+        // চ্যাটজিপিটি সল্যুশন: গ্রেডল যাতে বাইনারি ডিলিট বা নষ্ট না করতে পারে
+        doNotStrip "**/libproot.so"
+        doNotStrip "**/libproot-loader.so"
+        doNotStrip "**/libproot-loader64.so"
     }
 
     compileOptions {
