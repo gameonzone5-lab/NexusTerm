@@ -73,7 +73,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun printWelcomeMessage() {
-        tvOutput.append("NexusTerm v6.1-BUSYBOX (Symlink Protected)\n")
+        tvOutput.append("NexusTerm v6.2-BUSYBOX (Symlink Protected)\n")
         tvOutput.append("Type 'setup-linux' to extract Ubuntu safely.\n")
         tvOutput.append("Type 'check-symlinks' to verify Android tar didn't break files.\n")
         tvOutput.append("Type 'health-check' to verify RootFS execution.\n")
@@ -158,6 +158,7 @@ class MainActivity : ComponentActivity() {
             runOnUiThread { tvOutput.append("[*] Purging corrupted RootFS...\n") }
             File(filesDir, "linux").deleteRecursively()
             File(filesDir, "busybox").delete()
+            File(filesDir, "rootfs.tar.gz").delete()
             runOnUiThread { tvOutput.append("[SUCCESS] Environment cleaned. Run 'setup-linux'.\n") }
         }
     }
@@ -178,13 +179,14 @@ class MainActivity : ComponentActivity() {
                 }
 
                 val busybox = File(filesDir, "busybox")
-                if (!busybox.exists()) {
+                if (!busybox.exists() || busybox.length() < 500000) {
                     runOnUiThread { tvOutput.append("[*] Downloading Linux BusyBox for safe extraction...\n") }
-                    downloadFile("https://busybox.net/downloads/binaries/1.35.0-aarch64-linux-musl/busybox", busybox.absolutePath)
+                    // 🚨 ভুল URL ফিক্স করা হয়েছে:
+                    downloadFile("https://busybox.net/downloads/binaries/1.31.0-defconfig-multiarch-musl/busybox-armv8l", busybox.absolutePath)
                     busybox.setExecutable(true, false)
                 }
                 
-                if (!File(linuxDir, "usr/bin/apt").exists()) {
+                if (!File(linuxDir, "usr/bin/apt").exists() && busybox.exists()) {
                     runOnUiThread { tvOutput.append("[*] Extracting RootFS using BusyBox (Protecting Symlinks)...\n") }
                     val pb = ProcessBuilder(busybox.absolutePath, "tar", "-xf", tarFile.absolutePath, "-C", linuxDir.absolutePath)
                     pb.redirectErrorStream(true)
@@ -263,7 +265,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // এই সেই ফাংশনটি যা আমি আগের বার দিতে ভুলে গিয়েছিলাম!
     private fun executeCommand(command: String) {
         thread {
             try {
