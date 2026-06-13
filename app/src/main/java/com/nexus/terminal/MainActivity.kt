@@ -148,7 +148,7 @@ class MainActivity : ComponentActivity() {
     private fun runLinuxCommand(cmd: String) {
         Thread {
             try {
-                // THE ULTIMATE FIX: Android-এর নিজস্ব Native Library ফোল্ডার থেকে PRoot রান করা
+                // THE ULTIMATE BYPASS: Android-এর নিজস্ব Native Library ফোল্ডার থেকে PRoot রান করা
                 val nativeLibraryDir = applicationInfo.nativeLibraryDir
                 val prootBinary = File(nativeLibraryDir, "libproot.so")
                 

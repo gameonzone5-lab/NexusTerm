@@ -10,14 +10,14 @@ android {
     defaultConfig {
         applicationId "com.nexus.terminal"
         minSdk 24
-        targetSdk 28
-        versionCode 5
-        versionName "5.0-NativeEngine"
+        targetSdk 34  // লেটেস্ট অ্যান্ড্রয়েড সাপোর্ট (Play Protect ওয়ার্নিং আসবে না)
+        versionCode 6
+        versionName "6.0-NativeEngine"
     }
 
     packagingOptions {
         jniLibs {
-            useLegacyPackaging true // এটি OS-কে বাধ্য করবে proot এক্সট্র্যাক্ট করে পারমিশন দিতে
+            useLegacyPackaging true // OS-কে বাধ্য করবে proot আনজিপ করে Execute পারমিশন দিতে
         }
     }
 
