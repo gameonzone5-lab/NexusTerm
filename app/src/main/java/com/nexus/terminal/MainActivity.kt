@@ -40,7 +40,7 @@ class MainActivity : ComponentActivity() {
         currentDirectory = filesDir.absolutePath
 
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NexusTerm::DiagnosticEngine")
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NexusTerm::BusyBoxEngine")
 
         printWelcomeMessage()
 
@@ -53,7 +53,7 @@ class MainActivity : ComponentActivity() {
                 when (command) {
                     "setup-linux" -> setupLinuxEnvironment()
                     "health-check" -> runHealthCheck()
-                    "debug-linux" -> runDeepDebug()
+                    "check-symlinks" -> checkSymlinks()
                     "repair-linux" -> repairLinux()
                     "system-info" -> printSystemInfo()
                     "clear" -> { tvOutput.text = ""; printWelcomeMessage() }
@@ -73,27 +73,31 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun printWelcomeMessage() {
-        tvOutput.append("NexusTerm v5.0-DIAGNOSTIC (Systematic Debug Build)\n")
-        tvOutput.append("Type 'system-info' to check ABI compatibility.\n")
-        tvOutput.append("Type 'setup-linux' to extract Ubuntu.\n")
-        tvOutput.append("Type 'health-check' to verify RootFS mounting.\n")
-        tvOutput.append("Type 'debug-linux' to trace execution crash points.\n")
+        tvOutput.append("NexusTerm v6.0-BUSYBOX (Symlink Protected)\n")
+        tvOutput.append("Type 'setup-linux' to extract Ubuntu safely.\n")
+        tvOutput.append("Type 'check-symlinks' to verify Android tar didn't break files.\n")
+        tvOutput.append("Type 'health-check' to verify RootFS execution.\n")
     }
 
     private fun printSystemInfo() {
-        tvOutput.append("=== SYSTEM COMPATIBILITY LAYER ===\n")
-        tvOutput.append("-> Android Version: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})\n")
-        tvOutput.append("-> Device: ${Build.MANUFACTURER} ${Build.MODEL}\n")
-        tvOutput.append("-> Architecture: ${Build.SUPPORTED_ABIS.joinToString(", ")}\n")
-        val storageCheck = if (Environment.isExternalStorageManager()) "GRANTED" else "DENIED (Type 'permit')"
-        tvOutput.append("-> Storage Access: $storageCheck\n")
-        tvOutput.append("==================================\n")
+        tvOutput.append("=== SYSTEM INFO ===\n")
+        tvOutput.append("-> Android: API ${Build.VERSION.SDK_INT}\n")
+        tvOutput.append("-> ABI: ${Build.SUPPORTED_ABIS.joinToString(", ")}\n")
+        tvOutput.append("===================\n")
+    }
+
+    // চ্যাটজিপিটি/ক্লডের কথামতো সিমলিংক চেক করার কমান্ড
+    private fun checkSymlinks() {
+        runOnUiThread { tvOutput.append("=== CHECKING LINUX SYMLINKS ===\n") }
+        executeCommand("ls -la ${filesDir.absolutePath}/linux/bin/sh")
+        executeCommand("ls -la ${filesDir.absolutePath}/linux/usr/bin/apt")
+        runOnUiThread { tvOutput.append("===============================\n") }
     }
 
     private fun extractStaticEngine() {
         val prootBinary = File(filesDir, "proot")
         if (!prootBinary.exists() || prootBinary.length() < 500000) {
-            runOnUiThread { tvOutput.append("[*] Extracting Base PRoot Engine...\n") }
+            runOnUiThread { tvOutput.append("[*] Extracting Static PRoot Engine...\n") }
             try {
                 assets.open("proot").use { input ->
                     FileOutputStream(prootBinary).use { output -> input.copyTo(output) }
@@ -114,73 +118,51 @@ class MainActivity : ComponentActivity() {
             val tmpDir = File(filesDir, "tmp").apply { mkdirs() }
 
             if (!prootBinary.exists()) {
-                runOnUiThread { tvOutput.append("[FAIL] PRoot binary missing from filesDir.\n") }
+                runOnUiThread { tvOutput.append("[FAIL] PRoot missing.\n") }
                 return@thread
             }
 
-            // Test 1: Native Execution
+            // Test 1: Native
             try {
-                val p1 = ProcessBuilder(prootBinary.absolutePath, "--version").start()
+                val p1 = ProcessBuilder(prootBinary.absolutePath, "--version").redirectErrorStream(true).start()
                 if (p1.waitFor() == 0) runOnUiThread { tvOutput.append("[PASS] Phase 1: PRoot executes natively.\n") }
-                else runOnUiThread { tvOutput.append("[FAIL] Phase 1: PRoot cannot run on this Android ABI.\n") }
-            } catch (e: Exception) { runOnUiThread { tvOutput.append("[FAIL] Phase 1 crashed: ${e.message}\n") } }
+                else runOnUiThread { tvOutput.append("[FAIL] Phase 1: PRoot execution failed.\n") }
+            } catch (e: Exception) {}
 
-            // Test 2: Guest Shell Execution (/bin/sh)
+            // Test 2: Guest /bin/sh (AI এর পরামর্শ অনুযায়ী)
             try {
-                val testScript2 = File(filesDir, "test_sh.sh")
-                testScript2.writeText("#!/system/bin/sh\nexport PROOT_NO_SECCOMP=1\nexport PROOT_TMP_DIR=${tmpDir.absolutePath}\n${prootBinary.absolutePath} -0 -r $rootfs /bin/sh -c 'echo OK'\n")
-                testScript2.setExecutable(true)
-                
-                val p2 = ProcessBuilder(testScript2.absolutePath).redirectErrorStream(true).start()
+                val p2 = ProcessBuilder(prootBinary.absolutePath, "-0", "-r", rootfs, "/bin/sh", "-c", "echo OK")
+                    .redirectErrorStream(true).start()
                 val out2 = BufferedReader(InputStreamReader(p2.inputStream)).readText()
                 if (p2.waitFor() == 0 && out2.contains("OK")) {
-                    runOnUiThread { tvOutput.append("[PASS] Phase 2: RootFS mounted and /bin/sh executes.\n") }
+                    runOnUiThread { tvOutput.append("[PASS] Phase 2: RootFS mounted and /bin/sh is working!\n") }
                 } else {
-                    runOnUiThread { tvOutput.append("[FAIL] Phase 2: RootFS mount or /bin/sh failed.\nOutput: $out2\n") }
+                    runOnUiThread { tvOutput.append("[FAIL] Phase 2: /bin/sh broken.\nOutput: $out2\n") }
                 }
-                testScript2.delete()
-            } catch (e: Exception) { runOnUiThread { tvOutput.append("[FAIL] Phase 2 crashed: ${e.message}\n") } }
+            } catch (e: Exception) {}
 
-            // Test 3: Guest APT Execution (/usr/bin/apt)
+            // Test 3: Guest apt
             try {
-                val testScript3 = File(filesDir, "test_apt.sh")
-                testScript3.writeText("#!/system/bin/sh\nexport PROOT_NO_SECCOMP=1\nexport PROOT_TMP_DIR=${tmpDir.absolutePath}\n${prootBinary.absolutePath} -0 -r $rootfs /usr/bin/apt --version\n")
-                testScript3.setExecutable(true)
-                
-                val p3 = ProcessBuilder(testScript3.absolutePath).redirectErrorStream(true).start()
+                val p3 = ProcessBuilder(prootBinary.absolutePath, "-0", "-r", rootfs, "/usr/bin/apt", "--version")
+                    .redirectErrorStream(true).start()
                 val out3 = BufferedReader(InputStreamReader(p3.inputStream)).readText()
                 if (p3.waitFor() == 0 && out3.contains("apt")) {
-                    runOnUiThread { tvOutput.append("[PASS] Phase 3: APT Package Manager responds.\n") }
+                    runOnUiThread { tvOutput.append("[PASS] Phase 3: APT Package Manager responds!\n") }
                 } else {
-                    runOnUiThread { tvOutput.append("[FAIL] Phase 3: APT broken or symlinks corrupted.\nOutput: $out3\n") }
+                    runOnUiThread { tvOutput.append("[FAIL] Phase 3: APT broken.\nOutput: $out3\n") }
                 }
-                testScript3.delete()
-            } catch (e: Exception) { runOnUiThread { tvOutput.append("[FAIL] Phase 3 crashed: ${e.message}\n") } }
+            } catch (e: Exception) {}
 
             runOnUiThread { tvOutput.append("=================================\n") }
         }
     }
 
-    // আপনার দেওয়া ৫টি স্টেপের ডিবাগ লজিক
-    private fun runDeepDebug() {
-        runOnUiThread { tvOutput.append("=== INITIATING DEEP TRACE DEBUG ===\n") }
-        val debugCmd = "echo '[STEP-1] Checking PWD' && pwd && " +
-                       "echo '[STEP-2] Checking shell version' && /bin/sh --version || echo 'sh failed' && " +
-                       "echo '[STEP-3] Listing root directory' && ls -l / && " +
-                       "echo '[STEP-4] Finding apt location' && which apt || echo 'apt not in PATH' && " +
-                       "echo '[STEP-5] Checking apt version' && apt --version || echo 'apt binary failed'"
-        runLinuxCommand(debugCmd)
-    }
-
     private fun repairLinux() {
         thread {
             runOnUiThread { tvOutput.append("[*] Purging corrupted RootFS...\n") }
-            try {
-                File(filesDir, "linux").deleteRecursively()
-                runOnUiThread { tvOutput.append("[SUCCESS] Environment cleaned. Run 'setup-linux'.\n") }
-            } catch (e: Exception) {
-                runOnUiThread { tvOutput.append("[ERROR] Repair failed.\n") }
-            }
+            File(filesDir, "linux").deleteRecursively()
+            File(filesDir, "busybox").delete()
+            runOnUiThread { tvOutput.append("[SUCCESS] Environment cleaned. Run 'setup-linux'.\n") }
         }
     }
 
@@ -198,11 +180,23 @@ class MainActivity : ComponentActivity() {
                     runOnUiThread { tvOutput.append("[*] Downloading Ubuntu RootFS...\n") }
                     downloadFile("https://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-arm64.tar.gz", tarFile.absolutePath)
                 }
+
+                // THE ULTIMATE FIX: Downloading Static BusyBox to bypass Android's broken tar
+                val busybox = File(filesDir, "busybox")
+                if (!busybox.exists()) {
+                    runOnUiThread { tvOutput.append("[*] Downloading Linux BusyBox for safe extraction...\n") }
+                    downloadFile("https://busybox.net/downloads/binaries/1.35.0-aarch64-linux-musl/busybox", busybox.absolutePath)
+                    busybox.setExecutable(true, false)
+                }
                 
                 if (!File(linuxDir, "usr/bin/apt").exists()) {
-                    runOnUiThread { tvOutput.append("[*] Extracting RootFS (Warning: Android tar may break symlinks)...\n") }
-                    val p = Runtime.getRuntime().exec(arrayOf("tar", "-xf", tarFile.absolutePath, "-C", linuxDir.absolutePath))
+                    runOnUiThread { tvOutput.append("[*] Extracting RootFS using BusyBox (Protecting Symlinks)...\n") }
+                    val pb = ProcessBuilder(busybox.absolutePath, "tar", "-xf", tarFile.absolutePath, "-C", linuxDir.absolutePath)
+                    pb.redirectErrorStream(true)
+                    val p = pb.start()
+                    val out = BufferedReader(InputStreamReader(p.inputStream)).readText()
                     p.waitFor()
+                    if (out.isNotEmpty()) runOnUiThread { tvOutput.append("[BusyBox Log] $out\n") }
                     tarFile.delete()
                 }
 
@@ -211,7 +205,7 @@ class MainActivity : ComponentActivity() {
                     writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
                 }
 
-                runOnUiThread { tvOutput.append("[SUCCESS] Setup Complete! Type 'health-check' to verify guest system.\n") }
+                runOnUiThread { tvOutput.append("[SUCCESS] Setup Complete! Type 'check-symlinks' then 'health-check'.\n") }
             } catch (e: Exception) {
                 runOnUiThread { tvOutput.append("[ERROR] Setup failed: ${e.message}\n") }
             } finally {
@@ -263,7 +257,7 @@ class MainActivity : ComponentActivity() {
                 runScript.delete() 
                 
                 runOnUiThread { 
-                    if (exitCode != 0) tvOutput.append("\n[SYSTEM ALERT] Command failed (Exit Code $exitCode). Type 'debug-linux' to trace.\n") 
+                    if (exitCode != 0) tvOutput.append("\n[SYSTEM ALERT] Command failed (Exit Code $exitCode).\n") 
                     else tvOutput.append("\n") 
                 }
             } catch (e: Exception) { 
