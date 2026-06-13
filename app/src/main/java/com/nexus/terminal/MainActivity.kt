@@ -34,7 +34,6 @@ class MainActivity : ComponentActivity() {
 
         currentDirectory = filesDir.absolutePath
 
-        // চ্যাটজিপিটি নির্দেশিত ৩ নম্বর ধাপ: অ্যাপের শুরুতেই নেটিভ ডিরেক্টরি লাইভ লগ করা
         logNativeLibraryDirectory()
         
         btnRun.setOnClickListener {
@@ -235,7 +234,10 @@ class MainActivity : ComponentActivity() {
                 while (errorReader.readLine().also { line = it } != null) output.append(line).append("\n")
                 process.waitFor()
                 runOnUiThread { if (output.isNotEmpty()) tvOutput.append(output.toString()) }
-            } catch (e: Exception) { runOnUiThread { tvOutput.append("Error: ${it.message}\n") } }
+            } catch (e: Exception) { 
+                // এখানেই it.message এর জায়গায় e.message করে ফিক্স করা হয়েছে!
+                runOnUiThread { tvOutput.append("Error: ${e.message}\n") } 
+            }
         }.start()
     }
 }
