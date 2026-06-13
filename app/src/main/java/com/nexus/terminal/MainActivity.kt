@@ -40,7 +40,7 @@ class MainActivity : ComponentActivity() {
         currentDirectory = filesDir.absolutePath
 
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NexusTerm::CoreEngine")
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NexusTerm::DiagnosticEngine")
 
         printWelcomeMessage()
 
@@ -53,6 +53,7 @@ class MainActivity : ComponentActivity() {
                 when (command) {
                     "setup-linux" -> setupLinuxEnvironment()
                     "health-check" -> runHealthCheck()
+                    "debug-linux" -> runDeepDebug()
                     "repair-linux" -> repairLinux()
                     "system-info" -> printSystemInfo()
                     "clear" -> { tvOutput.text = ""; printWelcomeMessage() }
@@ -60,10 +61,10 @@ class MainActivity : ComponentActivity() {
                     else -> {
                         if (command.startsWith("cd ")) {
                             handleCdCommand(command)
-                        } else if (File(filesDir, "linux/usr/bin/apt").exists()) {
+                        } else if (File(filesDir, "linux").exists()) {
                             runLinuxCommand(command)
                         } else {
-                            tvOutput.append("[SYSTEM] Environment not ready. Run 'setup-linux' first.\n")
+                            tvOutput.append("[SYSTEM] RootFS missing. Run 'setup-linux' first.\n")
                         }
                     }
                 }
@@ -72,10 +73,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun printWelcomeMessage() {
-        tvOutput.append("NexusTerm v4.0-STATIC (Dependency-Free Engine)\n")
-        tvOutput.append("Type 'system-info' to check compatibility.\n")
-        tvOutput.append("Type 'health-check' to verify static execution.\n")
-        tvOutput.append("Type 'setup-linux' to deploy Ubuntu.\n")
+        tvOutput.append("NexusTerm v5.0-DIAGNOSTIC (Systematic Debug Build)\n")
+        tvOutput.append("Type 'system-info' to check ABI compatibility.\n")
+        tvOutput.append("Type 'setup-linux' to extract Ubuntu.\n")
+        tvOutput.append("Type 'health-check' to verify RootFS mounting.\n")
+        tvOutput.append("Type 'debug-linux' to trace execution crash points.\n")
     }
 
     private fun printSystemInfo() {
@@ -91,7 +93,7 @@ class MainActivity : ComponentActivity() {
     private fun extractStaticEngine() {
         val prootBinary = File(filesDir, "proot")
         if (!prootBinary.exists() || prootBinary.length() < 500000) {
-            runOnUiThread { tvOutput.append("[*] Extracting Statically Linked Engine...\n") }
+            runOnUiThread { tvOutput.append("[*] Extracting Base PRoot Engine...\n") }
             try {
                 assets.open("proot").use { input ->
                     FileOutputStream(prootBinary).use { output -> input.copyTo(output) }
@@ -105,51 +107,76 @@ class MainActivity : ComponentActivity() {
 
     private fun runHealthCheck() {
         thread {
-            runOnUiThread { tvOutput.append("=== RUNNING HEALTH CHECK ===\n") }
+            runOnUiThread { tvOutput.append("=== RUNNING DEEP HEALTH CHECK ===\n") }
             
-            val linuxDir = File(filesDir, "linux")
-            if (File(linuxDir, "usr/bin/apt").exists()) runOnUiThread { tvOutput.append("[PASS] RootFS & APT present.\n") }
-            else runOnUiThread { tvOutput.append("[FAIL] RootFS missing.\n") }
-
             val prootBinary = File(filesDir, "proot")
-            if (prootBinary.exists()) {
-                try {
-                    // Strict Execution Check (Verifying Exit Code explicitly)
-                    val pb = ProcessBuilder(prootBinary.absolutePath, "--version")
-                    pb.redirectErrorStream(true)
-                    val p = pb.start()
-                    val output = BufferedReader(InputStreamReader(p.inputStream)).readText()
-                    val exitCode = p.waitFor()
-                    
-                    if (exitCode == 0 && output.contains("PRoot")) {
-                        runOnUiThread { tvOutput.append("[PASS] Static PRoot Engine executed perfectly.\n") }
-                    } else {
-                        runOnUiThread { 
-                            tvOutput.append("[FAIL] PRoot Execution crashed (Code: $exitCode).\n") 
-                            tvOutput.append("Output: $output\n")
-                        }
-                    }
-                } catch (e: Exception) {
-                    runOnUiThread { tvOutput.append("[FAIL] Fatal Execution Error: ${e.message}\n") }
-                }
-            } else {
-                runOnUiThread { tvOutput.append("[FAIL] Static PRoot binary missing.\n") }
+            val rootfs = File(filesDir, "linux").absolutePath
+            val tmpDir = File(filesDir, "tmp").apply { mkdirs() }
+
+            if (!prootBinary.exists()) {
+                runOnUiThread { tvOutput.append("[FAIL] PRoot binary missing from filesDir.\n") }
+                return@thread
             }
-            
-            runOnUiThread { tvOutput.append("============================\n") }
+
+            // Test 1: Native Execution
+            try {
+                val p1 = ProcessBuilder(prootBinary.absolutePath, "--version").start()
+                if (p1.waitFor() == 0) runOnUiThread { tvOutput.append("[PASS] Phase 1: PRoot executes natively.\n") }
+                else runOnUiThread { tvOutput.append("[FAIL] Phase 1: PRoot cannot run on this Android ABI.\n") }
+            } catch (e: Exception) { runOnUiThread { tvOutput.append("[FAIL] Phase 1 crashed: ${e.message}\n") } }
+
+            // Test 2: Guest Shell Execution (/bin/sh)
+            try {
+                val testScript2 = File(filesDir, "test_sh.sh")
+                testScript2.writeText("#!/system/bin/sh\nexport PROOT_NO_SECCOMP=1\nexport PROOT_TMP_DIR=${tmpDir.absolutePath}\n${prootBinary.absolutePath} -0 -r $rootfs /bin/sh -c 'echo OK'\n")
+                testScript2.setExecutable(true)
+                
+                val p2 = ProcessBuilder(testScript2.absolutePath).redirectErrorStream(true).start()
+                val out2 = BufferedReader(InputStreamReader(p2.inputStream)).readText()
+                if (p2.waitFor() == 0 && out2.contains("OK")) {
+                    runOnUiThread { tvOutput.append("[PASS] Phase 2: RootFS mounted and /bin/sh executes.\n") }
+                } else {
+                    runOnUiThread { tvOutput.append("[FAIL] Phase 2: RootFS mount or /bin/sh failed.\nOutput: $out2\n") }
+                }
+                testScript2.delete()
+            } catch (e: Exception) { runOnUiThread { tvOutput.append("[FAIL] Phase 2 crashed: ${e.message}\n") } }
+
+            // Test 3: Guest APT Execution (/usr/bin/apt)
+            try {
+                val testScript3 = File(filesDir, "test_apt.sh")
+                testScript3.writeText("#!/system/bin/sh\nexport PROOT_NO_SECCOMP=1\nexport PROOT_TMP_DIR=${tmpDir.absolutePath}\n${prootBinary.absolutePath} -0 -r $rootfs /usr/bin/apt --version\n")
+                testScript3.setExecutable(true)
+                
+                val p3 = ProcessBuilder(testScript3.absolutePath).redirectErrorStream(true).start()
+                val out3 = BufferedReader(InputStreamReader(p3.inputStream)).readText()
+                if (p3.waitFor() == 0 && out3.contains("apt")) {
+                    runOnUiThread { tvOutput.append("[PASS] Phase 3: APT Package Manager responds.\n") }
+                } else {
+                    runOnUiThread { tvOutput.append("[FAIL] Phase 3: APT broken or symlinks corrupted.\nOutput: $out3\n") }
+                }
+                testScript3.delete()
+            } catch (e: Exception) { runOnUiThread { tvOutput.append("[FAIL] Phase 3 crashed: ${e.message}\n") } }
+
+            runOnUiThread { tvOutput.append("=================================\n") }
         }
+    }
+
+    // আপনার দেওয়া ৫টি স্টেপের ডিবাগ লজিক
+    private fun runDeepDebug() {
+        runOnUiThread { tvOutput.append("=== INITIATING DEEP TRACE DEBUG ===\n") }
+        val debugCmd = "echo '[STEP-1] Checking PWD' && pwd && " +
+                       "echo '[STEP-2] Checking shell version' && /bin/sh --version || echo 'sh failed' && " +
+                       "echo '[STEP-3] Listing root directory' && ls -l / && " +
+                       "echo '[STEP-4] Finding apt location' && which apt || echo 'apt not in PATH' && " +
+                       "echo '[STEP-5] Checking apt version' && apt --version || echo 'apt binary failed'"
+        runLinuxCommand(debugCmd)
     }
 
     private fun repairLinux() {
         thread {
-            runOnUiThread { tvOutput.append("[*] Purging system...\n") }
+            runOnUiThread { tvOutput.append("[*] Purging corrupted RootFS...\n") }
             try {
                 File(filesDir, "linux").deleteRecursively()
-                File(filesDir, "proot").delete()
-                
-                // ক্লিনআপ: যদি আগের কোনো ডাইনামিক লাইব্রেরি থেকে থাকে
-                filesDir.listFiles()?.forEach { if (it.name.contains(".so")) it.delete() }
-                
                 runOnUiThread { tvOutput.append("[SUCCESS] Environment cleaned. Run 'setup-linux'.\n") }
             } catch (e: Exception) {
                 runOnUiThread { tvOutput.append("[ERROR] Repair failed.\n") }
@@ -173,7 +200,7 @@ class MainActivity : ComponentActivity() {
                 }
                 
                 if (!File(linuxDir, "usr/bin/apt").exists()) {
-                    runOnUiThread { tvOutput.append("[*] Extracting Native Filesystem...\n") }
+                    runOnUiThread { tvOutput.append("[*] Extracting RootFS (Warning: Android tar may break symlinks)...\n") }
                     val p = Runtime.getRuntime().exec(arrayOf("tar", "-xf", tarFile.absolutePath, "-C", linuxDir.absolutePath))
                     p.waitFor()
                     tarFile.delete()
@@ -183,12 +210,8 @@ class MainActivity : ComponentActivity() {
                     parentFile.mkdirs()
                     writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
                 }
-                File(linuxDir, "etc/apt/apt.conf.d/99nexus").apply {
-                    parentFile.mkdirs()
-                    writeText("APT::Sandbox::User \"root\";\n")
-                }
 
-                runOnUiThread { tvOutput.append("[SUCCESS] Setup Complete! Type 'health-check' to verify execution.\n") }
+                runOnUiThread { tvOutput.append("[SUCCESS] Setup Complete! Type 'health-check' to verify guest system.\n") }
             } catch (e: Exception) {
                 runOnUiThread { tvOutput.append("[ERROR] Setup failed: ${e.message}\n") }
             } finally {
@@ -205,7 +228,6 @@ class MainActivity : ComponentActivity() {
                 val rootfs = File(filesDir, "linux").absolutePath
                 val tmpDir = File(filesDir, "tmp").apply { mkdirs() }
 
-                // PURE STATIC EXECUTION SCRIPT
                 val runScript = File(filesDir, "run_cmd.sh")
                 runScript.writeText("#!/system/bin/sh\n" +
                     "export PROOT_NO_SECCOMP=1\n" +
@@ -241,7 +263,7 @@ class MainActivity : ComponentActivity() {
                 runScript.delete() 
                 
                 runOnUiThread { 
-                    if (exitCode != 0) tvOutput.append("\n[SYSTEM ALERT] Execution failed (Code $exitCode)\nRun 'health-check' for details.\n") 
+                    if (exitCode != 0) tvOutput.append("\n[SYSTEM ALERT] Command failed (Exit Code $exitCode). Type 'debug-linux' to trace.\n") 
                     else tvOutput.append("\n") 
                 }
             } catch (e: Exception) { 
