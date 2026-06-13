@@ -39,7 +39,7 @@ class MainActivity : ComponentActivity() {
         currentDirectory = filesDir.absolutePath
 
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NexusTerm::BackgroundExecution")
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NexusTerm::GodModeExecution")
 
         btnRun.setOnClickListener {
             val command = etInput.text.toString().trim()
@@ -57,7 +57,7 @@ class MainActivity : ComponentActivity() {
                     isLinuxReady -> runLinuxCommand(command)
                     else -> {
                         if (command.startsWith("apt ") || command.startsWith("linux ")) {
-                            tvOutput.append("[ERROR] Ubuntu Base is missing. Run 'setup-linux' first.\n")
+                            tvOutput.append("[ERROR] System unarmed. Run 'setup-linux' first.\n")
                         } else {
                             executeCommand(command)
                         }
@@ -84,7 +84,7 @@ class MainActivity : ComponentActivity() {
                 permissionChecked = false
             } else {
                 if (!permissionChecked) {
-                    tvOutput.append("\n[SUCCESS] Ready! Type 'setup-linux' to install pure Ubuntu.\n")
+                    tvOutput.append("\n[SUCCESS] Matrix Ready! Type 'setup-linux' to deploy Ubuntu.\n")
                     permissionChecked = true
                 }
             }
@@ -127,7 +127,7 @@ class MainActivity : ComponentActivity() {
             try {
                 val linuxDir = File(filesDir, "linux")
                 
-                runOnUiThread { tvOutput.append("[*] Initiating Deep Hacker-Style Extraction...\n") }
+                runOnUiThread { tvOutput.append("[*] Bypassing Android Restrictions. Initiating God-Mode Extraction...\n") }
                 
                 if (!File(linuxDir, "usr/bin/apt").exists()) {
                     linuxDir.deleteRecursively()
@@ -138,9 +138,8 @@ class MainActivity : ComponentActivity() {
                         downloadFile("https://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-arm64.tar.gz", tarFile.absolutePath)
                     }
                     
-                    runOnUiThread { tvOutput.append("[*] Unpacking RootFS natively (Background Safe)...\n") }
+                    runOnUiThread { tvOutput.append("[*] Forcing Native Extraction (Screen-off Safe). Please wait...\n") }
                     
-                    // HACKING STYLE: Native Shell Script Execution (Ignore non-fatal Android tar errors)
                     val extractScript = File(filesDir, "extract.sh")
                     extractScript.writeText("#!/system/bin/sh\ntar -xf ${tarFile.absolutePath} -C ${linuxDir.absolutePath} > /dev/null 2>&1\nexit 0\n")
                     extractScript.setExecutable(true)
@@ -160,9 +159,9 @@ class MainActivity : ComponentActivity() {
                     aptConf.parentFile.mkdirs()
                     aptConf.writeText("APT::Sandbox::User \"root\";\n")
 
-                    runOnUiThread { tvOutput.append("[SUCCESS] RootFS is Armed and Ready!\nType: apt update\n") }
+                    runOnUiThread { tvOutput.append("[SUCCESS] Ubuntu Engine Armed and Synced! Type: apt update\n") }
                 } else {
-                    runOnUiThread { tvOutput.append("[ERROR] Native Extraction Failed.\n") }
+                    runOnUiThread { tvOutput.append("[ERROR] System Deployment Failed.\n") }
                 }
             } catch (e: Exception) {
                 runOnUiThread { tvOutput.append("[ERROR] Setup failed: ${e.message}\n") }
@@ -190,19 +189,20 @@ class MainActivity : ComponentActivity() {
                 val tmpDir = File(filesDir, "tmp")
                 tmpDir.mkdirs() 
 
-                // NETHUNTER HACKING STYLE: Invisible Wrapper Script
-                // এই স্ক্রিপ্টটি অ্যান্ড্রয়েডের হোস্ট এনভায়রনমেন্ট ঠিক রেখে, শুধুমাত্র উবুন্টুর জন্য নতুন এনভায়রনমেন্ট তৈরি করবে।
+                // THE GOD-MODE SCRIPT: No --link2symlink, No Java Environment interference
                 val runScript = File(filesDir, "run_cmd.sh")
                 runScript.writeText("#!/system/bin/sh\n" +
                     "export PROOT_NO_SECCOMP=1\n" +
+                    "export PROOT_NO_SYSVIPC=1\n" +
                     "export PROOT_TMP_DIR=${tmpDir.absolutePath}\n" +
                     "export TMPDIR=${tmpDir.absolutePath}\n" +
                     "unset LD_PRELOAD\n" +
                     "${prootBinary.absolutePath} -0 -r $rootfs " +
                     "-b /dev -b /proc -b /sys -b /sdcard " +
+                    "-b ${filesDir.absolutePath}:${filesDir.absolutePath} " +
                     "-w /root " +
-                    "/usr/bin/env -i HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin TERM=xterm " +
-                    "/bin/bash -c \"$cmd\"\n"
+                    "/usr/bin/env -i HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin TERM=xterm LANG=C.UTF-8 " +
+                    "/bin/sh -c \"$cmd\"\n"
                 )
                 runScript.setExecutable(true)
 
@@ -225,7 +225,7 @@ class MainActivity : ComponentActivity() {
                 }
                 
                 val exitCode = p.waitFor()
-                runScript.delete() // কাজ শেষে হ্যাকিং স্ক্রিপ্ট গায়েব করে দেওয়া
+                runScript.delete() 
                 
                 runOnUiThread { 
                     if (exitCode != 0) tvOutput.append("[Process exited with code $exitCode]\n") 
