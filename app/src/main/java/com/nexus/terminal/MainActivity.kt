@@ -15,7 +15,6 @@ import java.io.FileOutputStream
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
-import android.system.Os
 
 class MainActivity : ComponentActivity() {
     private lateinit var tvOutput: TextView
@@ -132,13 +131,6 @@ class MainActivity : ComponentActivity() {
                 
                 if (File(linuxDir, "usr/bin/apt").exists()) {
                     tarFile.delete()
-                    
-                    // ব্রুট-ফোর্স লিনাক্স কার্নেল পারমিশন
-                    try {
-                        Runtime.getRuntime().exec(arrayOf("/system/bin/chmod", "-R", "777", "${linuxDir.absolutePath}/bin")).waitFor()
-                        Runtime.getRuntime().exec(arrayOf("/system/bin/chmod", "-R", "777", "${linuxDir.absolutePath}/usr/bin")).waitFor()
-                    } catch (e: Exception) {}
-
                     val resolvConf = File(linuxDir, "etc/resolv.conf")
                     resolvConf.parentFile.mkdirs()
                     resolvConf.writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
@@ -156,31 +148,21 @@ class MainActivity : ComponentActivity() {
     private fun runLinuxCommand(cmd: String) {
         Thread {
             try {
-                val prootBinary = File(filesDir, "proot")
-                if (!prootBinary.exists() || prootBinary.length() < 500000) {
-                     downloadFile("https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-aarch64-static", prootBinary.absolutePath)
-                }
-
-                // THE ULTIMATE BYPASS: কার্নেল লেভেল থেকে জোরপূর্বক এক্সিকিউট পারমিশন নেওয়া
-                try { Os.chmod(prootBinary.absolutePath, 511) /* 511 = 0777 */ } catch (e: Exception) {}
-                Runtime.getRuntime().exec(arrayOf("/system/bin/chmod", "777", prootBinary.absolutePath)).waitFor()
-                prootBinary.setExecutable(true, false)
-
-                // যদি সিস্টেম এরপরেও ব্লক করে, তবে ইউজারকে আসল কারণ জানানো
-                if (!prootBinary.canExecute()) {
-                    runOnUiThread { tvOutput.append("[CRITICAL] Android has permanently locked this app folder due to old cache. You MUST UNINSTALL the app completely and reinstall to unlock it.\n") }
+                // THE ULTIMATE FIX: Android-এর নিজস্ব Native Library ফোল্ডার থেকে PRoot রান করা
+                val nativeLibraryDir = applicationInfo.nativeLibraryDir
+                val prootBinary = File(nativeLibraryDir, "libproot.so")
+                
+                if (!prootBinary.exists()) {
+                    runOnUiThread { tvOutput.append("[CRITICAL] PRoot Native Library not found! Reinstall the APK.\n") }
                     return@Thread
                 }
 
                 val rootfs = File(filesDir, "linux")
                 val tmpDir = File(filesDir, "tmp")
                 tmpDir.mkdirs()
-                try { Os.chmod(tmpDir.absolutePath, 511) } catch(e: Exception){}
-                Runtime.getRuntime().exec(arrayOf("/system/bin/chmod", "777", tmpDir.absolutePath)).waitFor()
-                
                 tmpDir.listFiles()?.forEach { it.deleteRecursively() }
-
                 val realTmpPath = tmpDir.canonicalPath 
+
                 var mirrorDir = rootfs
                 val parts = realTmpPath.split("/").filter { it.isNotEmpty() }
                 for (part in parts) {

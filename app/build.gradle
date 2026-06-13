@@ -10,9 +10,15 @@ android {
     defaultConfig {
         applicationId "com.nexus.terminal"
         minSdk 24
-        targetSdk 34  // লেটেস্ট অ্যান্ড্রয়েড সাপোর্ট, কোনো ওয়ার্নিং আসবে না
-        versionCode 2
-        versionName "2.0-UserLAnd-Arch"
+        targetSdk 28
+        versionCode 5
+        versionName "5.0-NativeEngine"
+    }
+
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging true // এটি OS-কে বাধ্য করবে proot এক্সট্র্যাক্ট করে পারমিশন দিতে
+        }
     }
 
     compileOptions {
