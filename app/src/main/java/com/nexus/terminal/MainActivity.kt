@@ -11,14 +11,11 @@ import kotlin.concurrent.thread
 class MainActivity : AppCompatActivity() {
     private val TAG = "NexusTermMain"
     private lateinit var statusView: TextView
-
-    // ফিক্স ১: Hermes-এর ভুল URL সরিয়ে অফিশিয়াল Ubuntu Base URL দেওয়া হলো
     private val ROOTFS_URL = "https://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-arm64.tar.gz"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // রিয়েল-টাইম প্রগ্রেস দেখার জন্য স্ক্রলএবল টার্মিনাল স্টাইল UI
         statusView = TextView(this).apply {
             textSize = 14f
             setPadding(32, 32, 32, 32)
@@ -35,11 +32,9 @@ class MainActivity : AppCompatActivity() {
                 val engineManager = NativeEngineManager(this@MainActivity)
                 val downloader = RootFSDownloader(this@MainActivity)
 
-                // ১. Engine Deploy (Termux PRoot + libtalloc)
                 updateStatus("\n[1/4] PRoot ইঞ্জিন ডিপ্লয় করা হচ্ছে...")
                 engineManager.installEngine()
 
-                // ২. RootFS Download
                 val rootfsFile = File(filesDir, "ubuntu-rootfs.tar.gz")
                 if (!rootfsFile.exists() || rootfsFile.length() < 25_000_000) {
                     updateStatus("\n[2/4] Ubuntu RootFS ডাউনলোড হচ্ছে (অপেক্ষা করুন)...")
@@ -50,7 +45,6 @@ class MainActivity : AppCompatActivity() {
                     updateStatus("\n[2/4] RootFS আগে থেকেই স্টোরেজে রেডি আছে।")
                 }
 
-                // ৩. RootFS Extraction (Hardlink Bypass Magic)
                 val rootfsDir = File(filesDir, "ubuntu")
                 if (!rootfsDir.exists() || rootfsDir.listFiles()?.isEmpty() == true) {
                     updateStatus("\n[3/4] PRoot-এর মাধ্যমে RootFS এক্সট্র্যাক্ট করা হচ্ছে (Symlink Magic)...")
@@ -59,7 +53,6 @@ class MainActivity : AppCompatActivity() {
                     updateStatus("\n[3/4] RootFS আগে থেকেই এক্সট্র্যাক্ট করা আছে।")
                 }
 
-                // ৪. Launching Ubuntu
                 updateStatus("\n[4/4] Ubuntu Shell-এ কানেক্ট করা হচ্ছে...")
                 launchUbuntuShell(engineManager, rootfsDir)
 
@@ -72,22 +65,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractRootFSViaPRoot(engine: NativeEngineManager, archive: File, target: File) {
         if (!target.exists()) target.mkdirs()
-
-        // ম্যাজিক কমান্ড: --link2symlink ব্যবহার করে অ্যান্ড্রয়েডের হার্ডলিংক রেস্ট্রিকশন বাইপাস
         val cmd = "${engine.prootBinary.absolutePath} -0 -r ${target.absolutePath} --link2symlink /system/bin/sh -c 'tar -xzf ${archive.absolutePath} -C ${target.absolutePath}'"
         executeProcess(engine.getExecutionEnv(), cmd, "Extraction")
     }
 
     private fun launchUbuntuShell(engine: NativeEngineManager, rootfsDir: File) {
-        // এক্সট্র্যাক্ট হওয়া উবুন্টুর ভেতরে টেস্ট রান করানো
         val cmd = "${engine.prootBinary.absolutePath} -0 -r ${rootfsDir.absolutePath} /bin/sh -c 'echo \"\n[SUCCESS] UBUNTU ARM64 IS RUNNING NATIVELY!\" && cat /etc/os-release'"
         executeProcess(engine.getExecutionEnv(), cmd, "Shell")
     }
 
     private fun executeProcess(env: Map<String, String>, command: String, label: String) {
         Log.d(TAG, "Executing $label: $command")
-        
-        // ফিক্স ২: স্পেস ইস্যু এড়াতে শেল র্যাপার ব্যবহার করা হলো
         val pb = ProcessBuilder("sh", "-c", command)
         pb.environment().putAll(env)
         pb.redirectErrorStream(true)
