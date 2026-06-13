@@ -7,6 +7,7 @@ import android.os.Environment
 import android.provider.Settings
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import java.io.BufferedReader
@@ -113,26 +114,32 @@ class MainActivity : ComponentActivity() {
         Thread {
             try {
                 val linuxDir = File(filesDir, "linux")
-                if (File(linuxDir, "usr/bin/apt").exists()) {
-                    runOnUiThread { tvOutput.append("[SUCCESS] Ubuntu is already installed!\n") }
-                    return@Thread
-                }
-
-                runOnUiThread { tvOutput.append("[*] Downloading Official Ubuntu Base...\n") }
+                
+                runOnUiThread { tvOutput.append("[*] Preparing Ubuntu Base...\n") }
                 if (!linuxDir.exists()) linuxDir.mkdirs()
 
-                val tarFile = File(filesDir, "rootfs.tar.gz")
-                downloadFile("https://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-arm64.tar.gz", tarFile.absolutePath)
-                
-                runOnUiThread { tvOutput.append("[*] Extracting RootFS (Ignoring Android symlink errors)...\n") }
-                val extProcess = Runtime.getRuntime().exec(arrayOf("tar", "-xf", tarFile.absolutePath, "-C", linuxDir.absolutePath))
-                extProcess.waitFor()
-                
-                if (File(linuxDir, "usr/bin/apt").exists()) {
+                // শুধুমাত্র যদি apt না থাকে তবেই ডাউনলোড করবে
+                if (!File(linuxDir, "usr/bin/apt").exists()) {
+                    val tarFile = File(filesDir, "rootfs.tar.gz")
+                    downloadFile("https://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-arm64.tar.gz", tarFile.absolutePath)
+                    
+                    runOnUiThread { tvOutput.append("[*] Extracting RootFS (This takes a moment)...\n") }
+                    val extProcess = Runtime.getRuntime().exec(arrayOf("tar", "-xf", tarFile.absolutePath, "-C", linuxDir.absolutePath))
+                    extProcess.waitFor()
                     tarFile.delete()
+                }
+
+                if (File(linuxDir, "usr/bin/apt").exists()) {
+                    // ফিক্স ১: DNS Resolution Fix
                     val resolvConf = File(linuxDir, "etc/resolv.conf")
                     resolvConf.parentFile.mkdirs()
                     resolvConf.writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
+                    
+                    // ফিক্স ২: Android Network Block Fix (APT Sandbox Bypass)
+                    val aptConf = File(linuxDir, "etc/apt/apt.conf.d/99nexus")
+                    aptConf.parentFile.mkdirs()
+                    aptConf.writeText("APT::Sandbox::User \"root\";\n")
+
                     runOnUiThread { tvOutput.append("[SUCCESS] Termux-like Ubuntu is Ready!\nType: apt update\n") }
                 } else {
                     runOnUiThread { tvOutput.append("[ERROR] Critical extraction failed.\n") }
@@ -147,10 +154,7 @@ class MainActivity : ComponentActivity() {
         Thread {
             try {
                 val prootBinary = File(filesDir, "proot")
-                
-                // জাদুকরী ফিক্স: ইন্টারনেটের বদলে অ্যাপের ভেতর থেকেই ফাইলটি বের করে নেওয়া হচ্ছে
                 if (!prootBinary.exists() || prootBinary.length() < 500000) {
-                     runOnUiThread { tvOutput.append("[*] Extracting Engine from Internal Assets...\n") }
                      assets.open("proot").use { input ->
                          FileOutputStream(prootBinary).use { output ->
                              input.copyTo(output)
@@ -161,7 +165,7 @@ class MainActivity : ComponentActivity() {
 
                 val rootfs = File(filesDir, "linux").absolutePath
                 val tmpDir = File(filesDir, "tmp")
-                tmpDir.mkdirs() 
+                tmpDir.mkdirs()
 
                 val appDataDir = filesDir.parentFile?.absolutePath ?: "/data/user/0/$packageName"
 
@@ -175,7 +179,6 @@ class MainActivity : ComponentActivity() {
                 )
                 
                 val pb = ProcessBuilder(commandList)
-                
                 val env = pb.environment()
                 env.clear()
                 env["HOME"] = "/root"
@@ -187,9 +190,24 @@ class MainActivity : ComponentActivity() {
                 pb.redirectErrorStream(true)
                 val p = pb.start()
                 
-                p.inputStream.bufferedReader().useLines { lines -> 
-                    lines.forEach { runOnUiThread { tvOutput.append("$it\n") } } 
+                // ফিক্স ৩: রিয়েল-টাইম টার্মিনাল রিডিং (আর কোনো হ্যাং বা ফ্রিজ হবে না)
+                val reader = InputStreamReader(p.inputStream)
+                val buffer = CharArray(1024)
+                var readCount: Int
+                while (reader.read(buffer).also { readCount = it } != -1) {
+                    val outputChunk = String(buffer, 0, readCount)
+                    runOnUiThread { 
+                        tvOutput.append(outputChunk) 
+                        // Auto-scroll logic
+                        val parent = tvOutput.parent
+                        if (parent is ScrollView) {
+                            parent.post { parent.fullScroll(android.view.View.FOCUS_DOWN) }
+                        }
+                    }
                 }
+                p.waitFor()
+                runOnUiThread { tvOutput.append("\n") }
+                
             } catch (e: Exception) { 
                 runOnUiThread { tvOutput.append("Linux Error: ${e.message}\n") } 
             }
@@ -200,13 +218,11 @@ class MainActivity : ComponentActivity() {
         var url = URL(urlString)
         var conn: HttpURLConnection
         var redirect: Boolean
-        
         do {
             conn = url.openConnection() as HttpURLConnection
             conn.setRequestProperty("User-Agent", "Mozilla/5.0")
             conn.instanceFollowRedirects = false
             val status = conn.responseCode
-            
             if (status in listOf(HttpURLConnection.HTTP_MOVED_TEMP, HttpURLConnection.HTTP_MOVED_PERM, HttpURLConnection.HTTP_SEE_OTHER)) {
                 redirect = true
                 url = URL(conn.getHeaderField("Location"))
