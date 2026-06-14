@@ -4,11 +4,12 @@ import android.os.Bundle
 import android.util.Log
 import android.widget.TextView
 import android.widget.ScrollView
-import androidx.appcompat.app.AppCompatActivity
+// ফিক্স: AppCompatActivity এর বদলে ComponentActivity ব্যবহার করা হচ্ছে
+import androidx.activity.ComponentActivity
 import java.io.*
 import kotlin.concurrent.thread
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : ComponentActivity() {
     private val TAG = "NexusTermMain"
     private lateinit var statusView: TextView
     private val ROOTFS_URL = "https://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-arm64.tar.gz"
@@ -25,7 +26,7 @@ class MainActivity : AppCompatActivity() {
         }
         setContentView(scrollView)
 
-        updateStatus("NexusTerm v11.0 (Hermes Core) চালু হচ্ছে...")
+        updateStatus("NexusTerm v11.1 (Crash Fixed) চালু হচ্ছে...")
 
         thread {
             try {
